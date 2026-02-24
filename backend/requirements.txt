@@ -1,8 +1,9 @@
 flask
 flask-cors
-flask
-flask-cors
 python-dotenv
 requests
 weasyprint
 gunicorn
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
