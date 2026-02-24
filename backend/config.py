@@ -1,13 +1,19 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 # SMTP Configuration
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
-SMTP_USERNAME = "coder.rajat07@gmail.com"
-SMTP_PASSWORD = "iujg yeie wyph zmns"
-SMTP_FROM_EMAIL = "coder.rajat07@gmail.com"
+SMTP_USERNAME = os.getenv("SMTP_USERNAME")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL")
 
 # Telegram Configuration
-TELEGRAM_BOT_TOKEN = "8653643537:AAH4kaIH-mEQIB_hZ-FWPuM3B-eyUWrtYsc"
-TELEGRAM_CHAT_ID = "5770045910"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # Server Configuration
-BASE_URL = "https://recruitpulse.algofolks.com"
+BASE_URL = os.getenv("BASE_URL")
