@@ -70,40 +70,43 @@ def send_email_with_attachment(job, pdf_path):
 
 def send_telegram_notification(message, document_path=None):
     """
-    Sends a notification message or document to Telegram.
+    Sends a notification message or document to all configured Telegram chat IDs.
     """
     bot_token = config.TELEGRAM_BOT_TOKEN
-    chat_id = config.TELEGRAM_CHAT_ID
+    chat_ids = config.TELEGRAM_CHAT_IDS
 
-    if not bot_token or not chat_id:
-        logger.warning("Telegram configuration is incomplete. Skipping notification.")
+    if not bot_token or not chat_ids:
+        logger.warning("Telegram configuration is incomplete (missing token or chat IDs). Skipping.")
         return False
 
-    try:
-        if document_path and os.path.exists(document_path):
-            # Send as document with caption
-            url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
-            with open(document_path, 'rb') as doc:
-                files = {'document': doc}
-                data = {
+    success = True
+    for chat_id in chat_ids:
+        try:
+            if document_path and os.path.exists(document_path):
+                # Send as document with caption
+                url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+                with open(document_path, 'rb') as doc:
+                    files = {'document': doc}
+                    data = {
+                        "chat_id": chat_id,
+                        "caption": message,
+                        "parse_mode": "HTML"
+                    }
+                    response = requests.post(url, data=data, files=files, timeout=20)
+            else:
+                # Send as simple message
+                url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                payload = {
                     "chat_id": chat_id,
-                    "caption": message,
+                    "text": message,
                     "parse_mode": "HTML"
                 }
-                response = requests.post(url, data=data, files=files, timeout=20)
-        else:
-            # Send as simple message
-            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            payload = {
-                "chat_id": chat_id,
-                "text": message,
-                "parse_mode": "HTML"
-            }
-            response = requests.post(url, json=payload, timeout=10)
+                response = requests.post(url, json=payload, timeout=10)
 
-        response.raise_for_status()
-        logger.info("Telegram notification sent successfully.")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send Telegram notification: {e}")
-        return False
+            response.raise_for_status()
+            logger.info(f"Telegram notification sent successfully to {chat_id}.")
+        except Exception as e:
+            logger.error(f"Failed to send Telegram notification to {chat_id}: {e}")
+            success = False # Mark as failed if any one fails, but keep trying others
+
+    return success

@@ -13,7 +13,9 @@ SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL")
 
 # Telegram Configuration
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+_chat_ids_str = os.getenv("TELEGRAM_CHAT_IDS", "")
+# Split by comma and filter out empty strings
+TELEGRAM_CHAT_IDS = [cid.strip() for cid in _chat_ids_str.split(",") if cid.strip()]
 
 # Server Configuration
 BASE_URL = os.getenv("BASE_URL")
