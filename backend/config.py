@@ -19,3 +19,12 @@ TELEGRAM_CHAT_IDS = [cid.strip() for cid in _chat_ids_str.split(",") if cid.stri
 
 # Server Configuration
 BASE_URL = os.getenv("BASE_URL")
+
+# Gmail OAuth Configuration
+GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID")
+GMAIL_PROJECT_ID = os.getenv("GMAIL_PROJECT_ID")
+GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET")
+GMAIL_AUTH_URI = os.getenv("GMAIL_AUTH_URI")
+GMAIL_TOKEN_URI = os.getenv("GMAIL_TOKEN_URI")
+GMAIL_AUTH_PROVIDER_X509_CERT_URL = os.getenv("GMAIL_AUTH_PROVIDER_X509_CERT_URL")
+GMAIL_REDIRECT_URIS = [uri.strip() for uri in os.getenv("GMAIL_REDIRECT_URIS", "").split(",") if uri.strip()]

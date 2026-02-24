@@ -62,14 +62,15 @@ def save_jobs_to_json(jobs):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 def update_job_sent_status(job_id):
-    """Updates jobs.json to mark a job as emailed."""
+    """Updates jobs.json to mark a job draft as created."""
     try:
         jobs = load_jobs_from_json()
         updated = False
         for job in jobs:
             if job.get('jobId') == job_id:
                 job['emailSent'] = True
-                job['emailSentAt'] = datetime.utcnow().isoformat()
+                job['draftCreated'] = True
+                job['draftCreatedAt'] = datetime.utcnow().isoformat()
                 updated = True
                 break
 
@@ -209,36 +210,37 @@ def generate_resume_pdf():
                 "emailBody": data.get('emailBody', "Please find my resume attached.")
             }
 
-        # 3. Send Email with Attachment
-        email_sent = email_pipeline.send_email_with_attachment(job_data, pdf_path)
+        # 3. Create Gmail Draft with Attachment
+        draft_created = email_pipeline.send_email_with_attachment(job_data, pdf_path)
         
-        if email_sent:
+        if draft_created:
             # 4. Update jobs.json
             update_job_sent_status(job_id)
             
             # 5. Send Telegram Notification
             telegram_msg = (
-                f"✅ <b>Email Sent with Attachment</b>\n"
+                f"📝 <b>Gmail Draft Created</b>\n"
                 f"Job: {title}\n"
                 f"Company: {company}\n"
                 f"To: {job_data.get('applyEmail')}\n"
-                f"File: {filename}"
+                f"File: {filename}\n"
+                f"Review and send from your Gmail Drafts."
             )
             email_pipeline.send_telegram_notification(telegram_msg, pdf_path)
 
             return jsonify({
                 "success": True, 
-                "emailSent": True,
+                "draftCreated": True,
                 "filename": filename,
                 "downloadUrl": f"{config.BASE_URL}/downloads/{filename}"
             }), 200
         else:
             return jsonify({
                 "success": True, 
-                "emailSent": False, 
-                "error": "Email failed to send but PDF was generated",
+                "draftCreated": False, 
+                "error": "Failed to create Gmail draft but PDF was generated",
                 "filename": filename
-            }), 200 # Return 200 but notify about email failure
+            }), 200 # Return 200 but notify about draft failure
 
     except Exception as e:
         logger.error(f"❌ Error in /api/generate-resume-pdf: {e}")
