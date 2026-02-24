@@ -254,7 +254,7 @@ def generate_resume_pdf():
                 "success": True, 
                 "emailSent": True,
                 "filename": filename,
-                "downloadUrl": f"http://localhost:5000/downloads/{filename}"
+                "downloadUrl": f"http://localhost:5350/downloads/{filename}"
             }), 200
         else:
             return jsonify({
@@ -288,7 +288,7 @@ def download_file(filename):
         return jsonify({"success": False, "error": "File not found"}), 404
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5350))
     print(f"🚀 Server running on http://localhost:{port}")
     print(f"📂 Data will be saved to: {JSON_FILE_PATH}")
     app.run(host='0.0.0.0', port=port, debug=True)
