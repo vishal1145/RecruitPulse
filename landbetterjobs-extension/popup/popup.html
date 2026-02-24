@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RecruitPulse Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+
+<body>
+  <!-- ── Header ── -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8" />
+          <path d="m21 21-4.35-4.35" />
+          <path d="M11 8v6M8 11h6" />
+        </svg>
+      </div>
+      <div class="brand-text">
+        <span class="brand-name">RecruitPulse</span>
+        <span class="brand-sub">Job Scraper Agent</span>
+      </div>
+    </div>
+    <div class="status-indicator" id="statusDot" title="Agent idle"></div>
+  </header>
+
+  <!-- ── Stats Bar ── -->
+  <div class="stats-bar">
+    <div class="stat-chip">
+      <span class="stat-val" id="statTotal">0</span>
+      <span class="stat-label">In Queue</span>
+    </div>
+    <div class="stat-chip success">
+      <span class="stat-val" id="statSuccess">0</span>
+      <span class="stat-label">Sent</span>
+    </div>
+    <div class="stat-chip error">
+      <span class="stat-val" id="statFailed">0</span>
+      <span class="stat-label">Failed</span>
+    </div>
+  </div>
+
+  <!-- ── Controls ── -->
+  <div class="controls">
+    <button id="btnStart" class="btn btn-primary" title="Start the scraping agent">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+        <polygon points="5,3 19,12 5,21" />
+      </svg>
+      Start Agent
+    </button>
+    <button id="btnStop" class="btn btn-danger" title="Stop the agent" disabled>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="6" y="6" width="12" height="12" />
+      </svg>
+      Stop
+    </button>
+    <button id="btnClear" class="btn btn-ghost" title="Clear history & storage">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round">
+        <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+      </svg>
+      Reset
+    </button>
+  </div>
+
+  <!-- ── Log Feed ── -->
+  <div class="log-section">
+    <div class="log-header">
+      <span>Activity Log</span>
+      <button class="log-clear-btn" id="btnClearLog" title="Clear log">✕</button>
+    </div>
+    <div class="log-feed" id="logFeed">
+      <div class="log-entry info">
+        <span class="log-time">--:--:--</span>
+        <span class="log-msg">Ready. Open the LandBetterJobs dashboard, then click Start Agent.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Footer ── -->
+  <footer>
+    <span id="footerStatus">Idle</span>
+    <a href="https://landbetterjobs.com/dashboard" id="openDashboard" target="_blank">Open Dashboard ↗</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

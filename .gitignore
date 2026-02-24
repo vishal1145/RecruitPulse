@@ -1,0 +1,12 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/.env
+backend/generated_pdfs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

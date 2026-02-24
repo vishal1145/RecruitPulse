@@ -1,0 +1,71 @@
+{
+  "manifest_version": 3,
+  "name": "RecruitPulse – Job Scraper Agent",
+  "version": "1.0.0",
+  "description": "Automated job extraction agent for LandBetterJobs dashboard. Processes jobs sequentially and sends structured data to your backend API.",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "activeTab",
+    "storage",
+    "downloads",
+    "downloads.open"
+  ],
+  "host_permissions": [
+    "https://landbetterjobs.com/*",
+    "*://*.linkedin.com/*",
+    "*://*.indeed.com/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://landbetterjobs.com/dashboard*"
+      ],
+      "js": [
+        "content/dashboard.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://landbetterjobs.com/jd-resume-builder*",
+        "*://landbetterjobs.com/resumes/*"
+      ],
+      "js": [
+        "content/resumeBuilder.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content/extractors/linkedin.js",
+        "content/extractors/indeed.js",
+        "content/extractors/generic.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "RecruitPulse Agent"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
