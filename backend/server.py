@@ -8,6 +8,7 @@ import logging
 from job_email_service import JobEmailService
 from pdf_service import PdfService
 import email_pipeline
+import config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -229,7 +230,7 @@ def generate_resume_pdf():
                 "success": True, 
                 "emailSent": True,
                 "filename": filename,
-                "downloadUrl": f"http://localhost:5350/downloads/{filename}"
+                "downloadUrl": f"{config.BASE_URL}/downloads/{filename}"
             }), 200
         else:
             return jsonify({
@@ -264,6 +265,6 @@ def download_file(filename):
 
 if __name__ == '__main__':
     port = PORT
-    print(f"🚀 Server running on http://localhost:{port}")
+    print(f"🚀 Server running on {config.BASE_URL}")
     print(f"📂 Data will be saved to: {JSON_FILE_PATH}")
     app.run(host='0.0.0.0', port=port, debug=True)
