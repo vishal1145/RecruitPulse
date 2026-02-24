@@ -68,9 +68,9 @@ def send_email_with_attachment(job, pdf_path):
         logger.error(f"Failed to send email to {to_email}: {e}")
         return False
 
-def send_telegram_notification(message):
+def send_telegram_notification(message, document_path=None):
     """
-    Sends a notification message to Telegram.
+    Sends a notification message or document to Telegram.
     """
     bot_token = config.TELEGRAM_BOT_TOKEN
     chat_id = config.TELEGRAM_CHAT_ID
@@ -79,15 +79,28 @@ def send_telegram_notification(message):
         logger.warning("Telegram configuration is incomplete. Skipping notification.")
         return False
 
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "HTML"
-    }
-
     try:
-        response = requests.post(url, json=payload, timeout=10)
+        if document_path and os.path.exists(document_path):
+            # Send as document with caption
+            url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+            with open(document_path, 'rb') as doc:
+                files = {'document': doc}
+                data = {
+                    "chat_id": chat_id,
+                    "caption": message,
+                    "parse_mode": "HTML"
+                }
+                response = requests.post(url, data=data, files=files, timeout=20)
+        else:
+            # Send as simple message
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            payload = {
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "HTML"
+            }
+            response = requests.post(url, json=payload, timeout=10)
+
         response.raise_for_status()
         logger.info("Telegram notification sent successfully.")
         return True

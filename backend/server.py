@@ -224,7 +224,7 @@ def generate_resume_pdf():
                 f"To: {job_data.get('applyEmail')}\n"
                 f"File: {filename}"
             )
-            email_pipeline.send_telegram_notification(telegram_msg)
+            email_pipeline.send_telegram_notification(telegram_msg, pdf_path)
 
             return jsonify({
                 "success": True, 
