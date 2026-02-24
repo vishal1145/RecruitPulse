@@ -1,6 +1,7 @@
 import logging
 import requests
 import os
+import config
 from gmail_service import GmailService
 
 # Configure logging
