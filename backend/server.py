@@ -1,10 +1,8 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from pymongo import MongoClient
 import os
 import json
 from datetime import datetime
-import certifi
 import fcntl
 import logging
 from job_email_service import JobEmailService
@@ -27,23 +25,8 @@ PDF_OUTPUT_DIR = os.path.join(BASE_DIR, 'generated_pdfs')
 # Initialize PDF Service
 pdf_service = PdfService(PDF_OUTPUT_DIR)
 
-# MongoDB Configuration (Keeping as optional secondary)
-MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://rajatsrivastava_db_user:JIbmACTXYiHNMmRJ@brokergully.xhtxlpw.mongodb.net/?retryWrites=true&w=majority")
-DB_NAME = "RecruitPulse"
-COLLECTION_NAME = "jobs"
-
-# MongoDB Connection
-mongo_available = False
-try:
-    # Use certifi for SSL certificate verification
-    client = MongoClient(MONGO_URI, tlsCAFile=certifi.where(), serverSelectionTimeoutMS=5000)
-    db = client[DB_NAME]
-    jobs_collection = db[COLLECTION_NAME]
-    client.admin.command('ping')
-    mongo_available = True
-    print("✅ Connected to MongoDB successfully")
-except Exception as e:
-    print(f"⚠️ MongoDB not available, falling back to JSON only: {e}")
+# Port Configuration
+PORT = int(os.environ.get('PORT', 5350))
 
 def load_jobs_from_json():
     if not os.path.exists(JSON_FILE_PATH):
@@ -102,7 +85,6 @@ def health_check():
         "status": "ok",
         "service": "RecruitPulse API",
         "time": datetime.utcnow().isoformat(),
-        "mongo_available": mongo_available,
         "json_path": JSON_FILE_PATH
     }), 200
 
@@ -137,6 +119,14 @@ def save_job():
         found = False
         for i, existing_job in enumerate(jobs):
             if existing_job.get('jobId') == job_id:
+                # [BUG FIX] Preserve existing sent status
+                # If backend already marked it as sent, don't let the extension overwrite it to False
+                if existing_job.get('emailSent') is True:
+                    data['emailSent'] = True
+                    # Carry over timestamps if missing in new data
+                    if 'emailSentAt' not in data:
+                        data['emailSentAt'] = existing_job.get('emailSentAt')
+                
                 jobs[i] = data
                 found = True
                 break
@@ -144,29 +134,14 @@ def save_job():
             jobs.append(data)
         save_jobs_to_json(jobs)
 
-        # 2. Update MongoDB (if available)
-        mongo_status = "skipped"
-        if mongo_available:
-            try:
-                jobs_collection.update_one(
-                    {'jobId': job_id},
-                    {'$set': data},
-                    upsert=True
-                )
-                mongo_status = "success"
-            except Exception as e:
-                print(f"⚠️ Failed to update MongoDB: {e}")
-                mongo_status = f"failed: {e}"
-
         action = "updated" if found else "inserted"
         job_title = data.get('title', 'Unknown Title')
-        print(f"✅ Job {action} (JSON: ok, MongoDB: {mongo_status}): {job_title} ({job_id})")
+        print(f"✅ Job {action} (JSON: ok): {job_title} ({job_id})")
 
         return jsonify({
             "success": True,
             "message": f"Job {action} successfully into local storage",
-            "jobId": job_id,
-            "mongo_status": mongo_status
+            "jobId": job_id
         }), 200
 
     except Exception as e:
@@ -288,7 +263,7 @@ def download_file(filename):
         return jsonify({"success": False, "error": "File not found"}), 404
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5350))
+    port = PORT
     print(f"🚀 Server running on http://localhost:{port}")
     print(f"📂 Data will be saved to: {JSON_FILE_PATH}")
     app.run(host='0.0.0.0', port=port, debug=True)

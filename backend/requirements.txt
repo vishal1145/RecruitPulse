@@ -1,7 +1,8 @@
 flask
 flask-cors
-pymongo
+flask
+flask-cors
 python-dotenv
-certifi
 requests
 weasyprint
+gunicorn

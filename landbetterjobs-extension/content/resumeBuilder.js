@@ -267,7 +267,7 @@ async function generateAndDownloadResumePDF(job) {
         log('INFO', `Extracted resume HTML (${resumeHtml.length} chars)`);
 
         // 2. Send to Backend
-        const API_URL = 'http://localhost:5000/api/generate-resume-pdf';
+        const API_URL = 'http://localhost:5350/api/generate-resume-pdf';
         const response = await fetch(API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
