@@ -1,3 +1,5 @@
+import { API_TEST_RESET_URL } from '../utils/constants.js';
+
 /**
  * popup/popup.js  –  RecruitPulse Popup Controller
  *
@@ -18,6 +20,7 @@ const MSG = {
 
 const btnStart = document.getElementById('btnStart');
 const btnStop = document.getElementById('btnStop');
+const btnCleanTest = document.getElementById('btnCleanTest');
 const btnClear = document.getElementById('btnClear');
 const btnClearLog = document.getElementById('btnClearLog');
 const logFeed = document.getElementById('logFeed');
@@ -131,6 +134,30 @@ btnClear.addEventListener('click', () => {
 });
 
 // Download button removed - server saves to jobs.json automatically
+btnCleanTest.addEventListener('click', async () => {
+    if (!confirm('This will clean all current jobs and replace them with the test record. Continue?')) return;
+
+    appendLog('🧹 Cleaning jobs and resetting for testing...', 'info');
+
+    try {
+        const response = await fetch(API_TEST_RESET_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            appendLog('✅ ' + result.message, 'success');
+            // Refresh stats since jobs changed
+            updateStats({ processedCount: 0, failedCount: 0, queueLength: 0 });
+        } else {
+            appendLog('❌ Reset failed: ' + (result.error || 'Unknown error'), 'error');
+        }
+    } catch (err) {
+        appendLog('❌ Request failed: ' + err.message, 'error');
+    }
+});
+
 btnClearLog.addEventListener('click', () => {
     logFeed.innerHTML = '';
     appendLog('Log cleared.', 'info');

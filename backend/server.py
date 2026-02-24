@@ -244,6 +244,41 @@ def generate_resume_pdf():
         logger.error(f"❌ Error in /api/generate-resume-pdf: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
+@app.route('/api/test/reset-jobs', methods=['POST'])
+def reset_jobs_for_testing():
+    """
+    Cleans jobs.json and pastes a predefined test job record.
+    """
+    try:
+        test_jobs = [
+            {
+                "applyEmail": "vishal.gupta@algofolks.com",
+                "company": "Adobe",
+                "emailBody": "Dear Smit Shah,\n\nMy name is Gautham Madhu, and I am a Product Manager with 5-10 years of experience, currently at Axis Bank. I'm writing to express my strong interest in the Senior Product Manager for Growth position at Adobe. Having followed Adobe's innovative work, I am particularly drawn to this role's potential to significantly impact user acquisition and engagement.\n\nMy career has been centered around leading product initiatives and driving measurable outcomes. As a Product Manager at Axis Bank, I've honed my skills in strategic planning, market analysis, and product lifecycle management. Prior to this, my experience as a Team Lead at J. Edgerton Consulting (04/2015 - 04/2022) and Resolutions Team Lead at Mount Rose Technologies (10/2010 - 03/2015) further developed my leadership and team management capabilities, both critical for a growth-focused role.\n\nI possess a robust skill set that aligns well with the requirements for a Senior Product Manager for Growth, including strong leadership and teamwork, effective time management, customer service, and communication skills. My knowledge of digital performance metrics and risk management has consistently enabled me to make data-driven decisions that propel product success. I am also proficient in multiple languages (English, Spanish, Polish, French), which could be a valuable asset in a global organization like Adobe.\n\nI am confident that my experience and passion for driving product growth would allow me to make significant contributions to Adobe. I have attached my resume for your review and would be grateful for the opportunity to discuss how my skills and experience can benefit your team. Please let me know if a brief call would be possible at your convenience.\n\nThank you for your time and consideration.\n\nSincerely,\nGautham Madhu\ngauthammadhu27@gmail.com",
+                "emailSent": False,
+                "emailSubject": "Experienced Product Manager | Driving Growth at Adobe | Gautham Madhu",
+                "experience": "",
+                "fullDescription": "We're hiring a Senior PM for Growth at Adobe.\n\nIf you've ever wanted to work on tools that millions of creators use every day, here's your chance- We are looking for a Senior Product Manager to join our team building Premiere Pro and next-gen video tools.\n\nWhy this team?\nWe're reimagining how creators work with video, from AI-powered features like Object Masking and Generative Extend to completely new workflows that didn't exist a year ago.\nThe problems are hard. The impact is real. And genuinely one of the best team I've worked with. You'll collaborate with world-class researchers, designers, and engineers who care deeply about craft. You'll ship features that professional editors, filmmakers, and content creators rely on and help shape the future of video creation.\n\nWhat we're looking for-\nSomeone who understands growth, loves working cross-functionally, and gets excited about turning powerful tech to products people actually want to use.\nIf that sounds like you, let's talk. DM me\n\nhttps://lnkd.in/gfh58DUX",
+                "hiringManager": "Overview\nOutreach\nEmail",
+                "jdResumeBuilt": False,
+                "jdResumeBuiltAt": "2026-02-24T06:31:53.609Z",
+                "jobId": "job_483800157",
+                "location": "",
+                "processedAt": "2026-02-23T12:59:01.270Z",
+                "shortDescription": "Senior Product Manager for Growth\n\nAdobe\n\nReviewed\nOverview\nOutreach\nEmail\nJob Post\n\nWe're hiring a Senior PM for Growth at Adobe.If you've ever wanted to work on tools that millions of creators use every day, here's your chance- We are looking for a Senior Product Manager to join our team building Premiere Pro and next-gen video tools.Why this team?We're reimagining how creators wo...\n\nView Full Post\nHiring Manager\nSS\nSmit Shah\u2019s\n\nPrincipal Product Manager- GenAI @ Adobe | Driving Product Lifec",
+                "source": "linkedin",
+                "title": "Senior Product Manager for Growth",
+                "updatedAt": "2026-02-24T06:31:53.616565",
+                "viewFullPostUrl": "https://www.linkedin.com/feed/update/urn:li:activity:7431195300490457088",
+                "emailSentAt": "2026-02-24T06:31:52.726120"
+            }
+        ]
+        save_jobs_to_json(test_jobs)
+        return jsonify({"success": True, "message": "Jobs reset for testing"}), 200
+    except Exception as e:
+        logger.error(f"❌ Error resetting jobs: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route('/api/send-pending-emails', methods=['POST'])
 def send_pending_emails():
     """DEPRECATED: Use /api/generate-resume-pdf for integrated PDF + Email flow."""
