@@ -6,6 +6,7 @@
 
 export const API_BASE_URL = 'https://recruitpulse.algofolks.com';
 export const API_ENDPOINT = `${API_BASE_URL}/api/jobs`;
+export const API_TEST_RESET_URL = `${API_BASE_URL}/api/test/reset-jobs`;
 
 // Milliseconds to wait between processing each job
 export const JOB_DELAY_MS = 5000;
