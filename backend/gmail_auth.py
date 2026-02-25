@@ -47,7 +47,12 @@ def get_gmail_credentials():
             }
             
             flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-            creds = flow.run_local_server(port=0)
+            # Use open_browser=False for headless server environments
+            creds = flow.run_local_server(
+                port=0, 
+                open_browser=False, 
+                authorization_prompt_message='Please visit this URL to authorize RecruitPulse: {url}'
+            )
             
         # Save the credentials for the next run
         with open(token_path, 'w') as token:

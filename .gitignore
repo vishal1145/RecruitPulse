@@ -10,3 +10,6 @@ Thumbs.db
 
 # Logs
 *.log
+# Secrets and Data
+backend/token.json
+backend/jobs.json
