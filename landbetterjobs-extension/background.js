@@ -669,6 +669,10 @@ function scrapeExternalJobPage() {
 // ─── Cleanup ──────────────────────────────────────────────────────────────────
 
 function finishQueue() {
+    if (dashboardTabId) {
+        log('INFO', 'Redirecting dashboard tab back to dashboard...');
+        chrome.tabs.update(dashboardTabId, { url: 'https://landbetterjobs.com/dashboard' });
+    }
     isRunning = false;
     stopRequested = false;
     dashboardTabId = null;
