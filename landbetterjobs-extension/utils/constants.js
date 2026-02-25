@@ -4,7 +4,7 @@
  * Modify API_BASE_URL to point to your backend.
  */
 
-export const API_BASE_URL = 'https://recruitpulse.algofolks.com';
+export const API_BASE_URL = 'http://localhost:5350';
 export const API_ENDPOINT = `${API_BASE_URL}/api/jobs`;
 export const API_TEST_RESET_URL = `${API_BASE_URL}/api/test/reset-jobs`;
 

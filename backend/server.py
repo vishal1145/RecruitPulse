@@ -9,6 +9,7 @@ from job_email_service import JobEmailService
 from pdf_service import PdfService
 import email_pipeline
 import config
+import scheduler  # Starts APScheduler background job on import
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -79,6 +80,41 @@ def update_job_sent_status(job_id):
         return updated
     except Exception as e:
         logger.error(f"Error updating jobs.json for {job_id}: {e}")
+        return False
+
+def _update_job_with_draft_metadata(job_id, draft_metadata):
+    """
+    Saves Gmail draft metadata and follow-up defaults into jobs.json
+    after a draft is successfully created.
+    """
+    try:
+        jobs = load_jobs_from_json()
+        updated = False
+        for job in jobs:
+            if job.get('jobId') == job_id:
+                job['draftCreated'] = True
+                job['draftCreatedAt'] = datetime.utcnow().isoformat()
+                job['emailSent'] = False         # Will be updated by followup_service when detected
+                job['gmailDraftId'] = draft_metadata.get('gmailDraftId')
+                job['gmailThreadId'] = draft_metadata.get('gmailThreadId')
+                # Follow-up defaults (can be overridden per job)
+                if 'followUpDays' not in job:
+                    job['followUpDays'] = 3
+                if 'followUpSent' not in job:
+                    job['followUpSent'] = False
+                if 'lastFollowUpAt' not in job:
+                    job['lastFollowUpAt'] = None
+                if 'replyReceived' not in job:
+                    job['replyReceived'] = False
+                updated = True
+                break
+
+        if updated:
+            save_jobs_to_json(jobs)
+            logger.info(f"Saved draft metadata for job {job_id}: {draft_metadata}")
+        return updated
+    except Exception as e:
+        logger.error(f"Error saving draft metadata for {job_id}: {e}")
         return False
 
 @app.route('/', methods=['GET'])
@@ -211,11 +247,11 @@ def generate_resume_pdf():
             }
 
         # 3. Create Gmail Draft with Attachment
-        draft_created = email_pipeline.send_email_with_attachment(job_data, pdf_path)
+        draft_created, draft_metadata = email_pipeline.send_email_with_attachment(job_data, pdf_path)
         
         if draft_created:
-            # 4. Update jobs.json
-            update_job_sent_status(job_id)
+            # 4. Update jobs.json with draft metadata + follow-up defaults
+            _update_job_with_draft_metadata(job_id, draft_metadata)
             
             # 5. Send Telegram Notification
             telegram_msg = (
@@ -224,6 +260,7 @@ def generate_resume_pdf():
                 f"Company: {company}\n"
                 f"To: {job_data.get('applyEmail')}\n"
                 f"File: {filename}\n"
+                f"Draft ID: {draft_metadata.get('gmailDraftId', 'N/A')}\n"
                 f"Review and send from your Gmail Drafts."
             )
             email_pipeline.send_telegram_notification(telegram_msg, pdf_path)
@@ -235,12 +272,15 @@ def generate_resume_pdf():
                 "downloadUrl": f"{config.BASE_URL}/downloads/{filename}"
             }), 200
         else:
+            email_pipeline.send_telegram_notification(
+                f"❌ <b>Gmail Draft Failed</b>\nJob: {title}\nCompany: {company}\nPDF was generated but draft creation failed."
+            )
             return jsonify({
                 "success": True, 
                 "draftCreated": False, 
                 "error": "Failed to create Gmail draft but PDF was generated",
                 "filename": filename
-            }), 200 # Return 200 but notify about draft failure
+            }), 200
 
     except Exception as e:
         logger.error(f"❌ Error in /api/generate-resume-pdf: {e}")

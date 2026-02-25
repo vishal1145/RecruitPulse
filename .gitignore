@@ -13,3 +13,4 @@ Thumbs.db
 # Secrets and Data
 backend/token.json
 backend/jobs.json
+server_extension/

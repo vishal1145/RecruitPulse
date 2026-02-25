@@ -10,34 +10,42 @@ logger = logging.getLogger(__name__)
 
 def send_email_with_attachment(job, pdf_path):
     """
-    Creates a Gmail draft with a PDF attachment instead of sending directly.
+    Creates a Gmail draft with a PDF attachment.
+    Returns (success: bool, metadata: dict) on success.
+    metadata contains gmailDraftId and gmailThreadId.
     """
     to_email = job.get('applyEmail')
     subject = job.get('emailSubject')
     body = job.get('emailBody')
-    
+
     if not to_email or to_email == "not-provided":
         logger.warning(f"No applyEmail provided for job {job.get('jobId')}. Skipping draft creation.")
-        return False
+        return False, {}
 
     if not os.path.exists(pdf_path):
         logger.error(f"PDF file not found at {pdf_path}")
-        return False
+        return False, {}
 
     try:
         logger.info(f"Creating Gmail draft for {to_email}...")
         gmail_service = GmailService()
         success, result = gmail_service.create_draft(to_email, subject, body, pdf_path)
-        
+
         if success:
-            logger.info(f"Gmail draft created successfully!")
-            return True
+            draft_id = result.get('id')
+            thread_id = result.get('message', {}).get('threadId')
+            logger.info(f"Gmail draft created! Draft ID: {draft_id}, Thread ID: {thread_id}")
+            metadata = {
+                'gmailDraftId': draft_id,
+                'gmailThreadId': thread_id,
+            }
+            return True, metadata
         else:
             logger.error(f"Failed to create Gmail draft: {result}")
-            return False
+            return False, {}
     except Exception as e:
         logger.error(f"Error in Gmail draft creation pipeline: {e}")
-        return False
+        return False, {}
 
 def send_telegram_notification(message, document_path=None):
     """
@@ -78,6 +86,6 @@ def send_telegram_notification(message, document_path=None):
             logger.info(f"Telegram notification sent successfully to {chat_id}.")
         except Exception as e:
             logger.error(f"Failed to send Telegram notification to {chat_id}: {e}")
-            success = False # Mark as failed if any one fails, but keep trying others
+            success = False
 
     return success
