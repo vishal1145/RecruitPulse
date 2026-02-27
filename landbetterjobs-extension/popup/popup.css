@@ -423,7 +423,6 @@ footer a:hover {
 
 /* ─── client-ready: hide manual/internal controls ────────────────────────── */
 .manual-controls,
-#btnCleanTest,
 #btnClear {
   display: none !important;
 }
