@@ -422,10 +422,11 @@ footer a:hover {
 }
 
 /* ─── client-ready: hide manual/internal controls ────────────────────────── */
-.manual-controls,
+/* .manual-controls,
+#btnCleanTest,
 #btnClear {
   display: none !important;
-}
+} */
 
 #btnSaveSettings {
   width: auto;
