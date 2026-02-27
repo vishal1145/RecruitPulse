@@ -6,4 +6,6 @@ weasyprint
 gunicorn
 google-api-python-client
 google-auth-oauthlib
-google-auth-httplib2apscheduler
+google-auth-httplib2
+google-auth
+apscheduler

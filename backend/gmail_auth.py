@@ -8,7 +8,12 @@ import logging
 import config
 
 # If modifying these scopes, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/gmail.compose']
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.compose',
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/documents',
+    'https://www.googleapis.com/auth/drive',
+]
 
 logger = logging.getLogger(__name__)
 

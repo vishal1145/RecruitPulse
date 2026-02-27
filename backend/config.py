@@ -11,11 +11,9 @@ SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL")
 
-# Telegram Configuration
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-_chat_ids_str = os.getenv("TELEGRAM_CHAT_IDS", "")
-# Split by comma and filter out empty strings
-TELEGRAM_CHAT_IDS = [cid.strip() for cid in _chat_ids_str.split(",") if cid.strip()]
+# Telegram Configuration (Now dynamic, loaded from telegram_config.json or headers)
+TELEGRAM_BOT_TOKEN = None
+TELEGRAM_CHAT_IDS = []
 
 # Server Configuration
 BASE_URL = os.getenv("BASE_URL")
@@ -28,3 +26,35 @@ GMAIL_AUTH_URI = os.getenv("GMAIL_AUTH_URI")
 GMAIL_TOKEN_URI = os.getenv("GMAIL_TOKEN_URI")
 GMAIL_AUTH_PROVIDER_X509_CERT_URL = os.getenv("GMAIL_AUTH_PROVIDER_X509_CERT_URL")
 GMAIL_REDIRECT_URIS = [uri.strip() for uri in os.getenv("GMAIL_REDIRECT_URIS", "").split(",") if uri.strip()]
+
+# Google Service Account (for Google Docs/Drive)
+GOOGLE_SERVICE_ACCOUNT_TYPE = os.getenv("GOOGLE_SERVICE_ACCOUNT_TYPE")
+GOOGLE_SERVICE_ACCOUNT_PROJECT_ID = os.getenv("GOOGLE_SERVICE_ACCOUNT_PROJECT_ID")
+GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_ID = os.getenv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_ID")
+GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = os.getenv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY", "").replace("\\n", "\n")
+GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL = os.getenv("GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL")
+GOOGLE_SERVICE_ACCOUNT_CLIENT_ID = os.getenv("GOOGLE_SERVICE_ACCOUNT_CLIENT_ID")
+GOOGLE_SERVICE_ACCOUNT_AUTH_URI = os.getenv("GOOGLE_SERVICE_ACCOUNT_AUTH_URI")
+GOOGLE_SERVICE_ACCOUNT_TOKEN_URI = os.getenv("GOOGLE_SERVICE_ACCOUNT_TOKEN_URI")
+GOOGLE_SERVICE_ACCOUNT_AUTH_PROVIDER_CERT_URL = os.getenv("GOOGLE_SERVICE_ACCOUNT_AUTH_PROVIDER_CERT_URL")
+GOOGLE_SERVICE_ACCOUNT_CLIENT_CERT_URL = os.getenv("GOOGLE_SERVICE_ACCOUNT_CLIENT_CERT_URL")
+GOOGLE_SERVICE_ACCOUNT_UNIVERSE_DOMAIN = os.getenv("GOOGLE_SERVICE_ACCOUNT_UNIVERSE_DOMAIN")
+
+def get_service_account_info():
+    """Returns the Google Service Account credentials as a dictionary."""
+    return {
+        "type": GOOGLE_SERVICE_ACCOUNT_TYPE,
+        "project_id": GOOGLE_SERVICE_ACCOUNT_PROJECT_ID,
+        "private_key_id": GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_ID,
+        "private_key": GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+        "client_email": GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL,
+        "client_id": GOOGLE_SERVICE_ACCOUNT_CLIENT_ID,
+        "auth_uri": GOOGLE_SERVICE_ACCOUNT_AUTH_URI,
+        "token_uri": GOOGLE_SERVICE_ACCOUNT_TOKEN_URI,
+        "auth_provider_x509_cert_url": GOOGLE_SERVICE_ACCOUNT_AUTH_PROVIDER_CERT_URL,
+        "client_x509_cert_url": GOOGLE_SERVICE_ACCOUNT_CLIENT_CERT_URL,
+        "universe_domain": GOOGLE_SERVICE_ACCOUNT_UNIVERSE_DOMAIN
+    }
+
+# OpenAI Configuration
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")

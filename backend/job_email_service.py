@@ -93,9 +93,7 @@ class JobEmailService:
                 logger.info(f"Successfully processed email for job {job_id}")
                 
                 # Send Telegram notification
-                title = job.get('title', 'Unknown Job')
-                company = job.get('company', 'Unknown Company')
-                self.telegram_service.send_notification(title, company, apply_email)
+                self.telegram_service.send_notification(job)
             else:
                 failed_count += 1
                 logger.error(f"Failed to send email for job {job_id}")

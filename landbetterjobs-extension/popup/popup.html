@@ -48,18 +48,34 @@
 
   <!-- ── Controls ── -->
   <div class="controls">
-    <button id="btnStart" class="btn btn-primary" title="Start the scraping agent">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-        <polygon points="5,3 19,12 5,21" />
-      </svg>
-      Start Agent
-    </button>
-    <button id="btnStop" class="btn btn-danger" title="Stop the agent" disabled>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-        <rect x="6" y="6" width="12" height="12" />
-      </svg>
-      Stop
-    </button>
+    <div class="automation-group">
+      <div class="automation-header">
+        <label for="automationGap">Automation Gap (minutes)</label>
+      </div>
+      <div class="automation-controls">
+        <input type="number" id="automationGap" min="1" placeholder="e.g. 60" class="automation-input" />
+        <button id="btnSaveAutomation" class="btn btn-primary" title="Save & Enable Automation">
+          Save Automation
+        </button>
+        <button id="btnDisableAutomation" class="btn btn-danger" title="Disable Automation" disabled>
+          Disable
+        </button>
+      </div>
+    </div>
+    <div class="manual-controls">
+      <button id="btnStart" class="btn btn-primary" title="Manually trigger one run (testing)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <polygon points="5,3 19,12 5,21" />
+        </svg>
+        Start Agent
+      </button>
+      <button id="btnStop" class="btn btn-danger" title="Stop current run" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="6" y="6" width="12" height="12" />
+        </svg>
+        Stop
+      </button>
+    </div>
     <button id="btnCleanTest" class="btn btn-ghost" title="Clean jobs.json and add test data">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round">
@@ -77,19 +93,40 @@
     </button>
   </div>
 
-  <!-- ── Log Feed ── -->
-  <div class="log-section">
-    <div class="log-header">
-      <span>Activity Log</span>
-      <button class="log-clear-btn" id="btnClearLog" title="Clear log">✕</button>
-    </div>
-    <div class="log-feed" id="logFeed">
-      <div class="log-entry info">
-        <span class="log-time">--:--:--</span>
-        <span class="log-msg">Ready. Open the LandBetterJobs dashboard, then click Start Agent.</span>
+  <!-- ── Settings ── -->
+  <div class="settings-section">
+    <button class="settings-toggle" id="btnToggleSettings">
+      <div class="settings-toggle-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path
+            d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2">
+          </path>
+          <circle cx="12" cy="12" r="3"></circle>
+          <path
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+          </path>
+        </svg>
+        Telegram Configuration
       </div>
+      <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2">
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </button>
+    <div class="settings-content" id="settingsContent">
+      <div class="form-group">
+        <label for="tgBotToken">Bot Token</label>
+        <input type="text" id="tgBotToken" placeholder="123456789:ABCDEF..." />
+      </div>
+      <div class="form-group">
+        <label for="tgChatIds">Chat IDs (comma-separated)</label>
+        <input type="text" id="tgChatIds" placeholder="5770045910, 7592350610" />
+      </div>
+      <button id="btnSaveSettings" class="btn btn-primary btn-sm">Save Telegram Config</button>
     </div>
   </div>
+
+
 
   <!-- ── Footer ── -->
   <footer>

@@ -18,17 +18,24 @@ const MSG = {
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 
+const automationGapInput = document.getElementById('automationGap');
+const btnSaveAutomation = document.getElementById('btnSaveAutomation');
+const btnDisableAutomation = document.getElementById('btnDisableAutomation');
 const btnStart = document.getElementById('btnStart');
 const btnStop = document.getElementById('btnStop');
 const btnCleanTest = document.getElementById('btnCleanTest');
 const btnClear = document.getElementById('btnClear');
-const btnClearLog = document.getElementById('btnClearLog');
-const logFeed = document.getElementById('logFeed');
+
 const statusDot = document.getElementById('statusDot');
 const footerStatus = document.getElementById('footerStatus');
 const statTotal = document.getElementById('statTotal');
 const statSuccess = document.getElementById('statSuccess');
 const statFailed = document.getElementById('statFailed');
+const btnToggleSettings = document.getElementById('btnToggleSettings');
+const settingsSection = document.querySelector('.settings-section');
+const btnSaveSettings = document.getElementById('btnSaveSettings');
+const tgBotTokenInput = document.getElementById('tgBotToken');
+const tgChatIdsInput = document.getElementById('tgChatIds');
 // Download button removed as server now handles local file saving
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -43,38 +50,24 @@ function formatTime(isoOrNow) {
 }
 
 function appendLog(message, level = 'info', timestamp = null) {
-    const entry = document.createElement('div');
-    entry.className = `log-entry ${level}`;
-
-    const time = document.createElement('span');
-    time.className = 'log-time';
-    time.textContent = formatTime(timestamp);
-
-    const msg = document.createElement('span');
-    msg.className = 'log-msg';
-    msg.textContent = message;
-
-    entry.appendChild(time);
-    entry.appendChild(msg);
-    logFeed.appendChild(entry);
-
-    // Auto-scroll to bottom
-    logFeed.scrollTop = logFeed.scrollHeight;
-
-    // Cap log at 200 entries to avoid memory bloat
-    while (logFeed.children.length > 200) {
-        logFeed.removeChild(logFeed.firstChild);
-    }
+    // Log feed removed from UI, keeping function stub to prevent errors from other components
+    console.log(`[${level}] ${message}`);
 }
 
-function setRunningState(running) {
+function setRunningState(running, scheduled = false) {
     isRunning = running;
     btnStart.disabled = running;
     btnStop.disabled = !running;
 
-    statusDot.className = 'status-indicator ' + (running ? 'running' : '');
-    statusDot.title = running ? 'Agent running…' : 'Agent idle';
-    footerStatus.textContent = running ? 'Running…' : 'Idle';
+    if (scheduled && !running) {
+        statusDot.className = 'status-indicator running';
+        statusDot.title = 'Agent Scheduled';
+        footerStatus.textContent = 'Scheduled';
+    } else {
+        statusDot.className = 'status-indicator ' + (running ? 'running' : '');
+        statusDot.title = running ? 'Agent running…' : 'Agent idle';
+        footerStatus.textContent = running ? 'Running…' : 'Idle';
+    }
 }
 
 function updateStats({ processedCount = 0, failedCount = 0, queueLength = 0 } = {}) {
@@ -102,22 +95,50 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 btnStart.addEventListener('click', () => {
     setRunningState(true);
-    appendLog('▶ Starting RecruitPulse agent…', 'info');
-
-    chrome.runtime.sendMessage({ type: MSG.START_QUEUE, options: {} }, (response) => {
+    chrome.runtime.sendMessage({ type: MSG.START_QUEUE }, (response) => {
         if (chrome.runtime.lastError) {
-            appendLog('❌ Could not reach background: ' + chrome.runtime.lastError.message, 'error');
+            console.error('Could not reach background:', chrome.runtime.lastError.message);
             setRunningState(false);
         }
     });
 });
 
 btnStop.addEventListener('click', () => {
-    appendLog('⏹ Stop requested…', 'warn');
     chrome.runtime.sendMessage({ type: MSG.STOP_QUEUE }, () => {
         setRunningState(false);
         footerStatus.textContent = 'Stopped';
         statusDot.className = 'status-indicator error';
+    });
+});
+
+btnSaveAutomation.addEventListener('click', () => {
+    const gap = parseInt(automationGapInput.value, 10);
+    if (!gap || gap < 1) {
+        alert('Please enter a valid automation gap in minutes (minimum 1).');
+        return;
+    }
+
+    chrome.storage.local.set({
+        automationGapMinutes: gap,
+        automationEnabled: true
+    }, () => {
+        btnDisableAutomation.disabled = false;
+        setRunningState(false, true); // Visual indicator that it's scheduled
+
+        chrome.runtime.sendMessage({ type: 'UPDATE_AUTOMATION' }, () => {
+            if (chrome.runtime.lastError) {
+                console.error("Failed to update automation:", chrome.runtime.lastError);
+            }
+        });
+    });
+});
+
+btnDisableAutomation.addEventListener('click', () => {
+    chrome.storage.local.set({ automationEnabled: false }, () => {
+        btnDisableAutomation.disabled = true;
+        setRunningState(false);
+
+        chrome.runtime.sendMessage({ type: 'UPDATE_AUTOMATION' });
     });
 });
 
@@ -158,9 +179,29 @@ btnCleanTest.addEventListener('click', async () => {
     }
 });
 
-btnClearLog.addEventListener('click', () => {
-    logFeed.innerHTML = '';
-    appendLog('Log cleared.', 'info');
+btnSaveSettings.addEventListener('click', () => {
+    const botToken = tgBotTokenInput.value.trim();
+    const chatIds = tgChatIdsInput.value.trim();
+
+    if (!botToken || !chatIds) {
+        appendLog('⚠️ Please provide both Bot Token and Chat IDs.', 'warn');
+        return;
+    }
+
+    chrome.storage.local.set({
+        telegram_config: {
+            botToken,
+            chatIds
+        }
+    }, () => {
+        appendLog('✅ Telegram configuration saved locally.', 'success');
+        // Optionally send to backend immediately if needed, 
+        // but it will be sent with the next action anyway.
+    });
+});
+
+btnToggleSettings.addEventListener('click', () => {
+    settingsSection.classList.toggle('open');
 });
 
 // ── On popup open: sync with background state ─────────────────────────────────
@@ -174,8 +215,7 @@ chrome.runtime.sendMessage({ type: MSG.GET_STATUS }, (response) => {
     }
 });
 
-// Load cumulative stats from storage
-chrome.storage.local.get(['recruitpulse_stats'], (result) => {
+chrome.storage.local.get(['recruitpulse_stats', 'telegram_config', 'automationGapMinutes', 'automationEnabled'], (result) => {
     const stats = result['recruitpulse_stats'];
     if (stats) {
         statSuccess.textContent = stats.success || 0;
@@ -183,5 +223,22 @@ chrome.storage.local.get(['recruitpulse_stats'], (result) => {
         if (stats.lastRun) {
             footerStatus.textContent = `Last run: ${formatTime(stats.lastRun)}`;
         }
+    }
+
+    const tgConfig = result['telegram_config'];
+    if (tgConfig) {
+        tgBotTokenInput.value = tgConfig.botToken || '';
+        tgChatIdsInput.value = tgConfig.chatIds || '';
+    }
+
+    if (result.automationGapMinutes) {
+        automationGapInput.value = result.automationGapMinutes;
+    }
+
+    if (result.automationEnabled) {
+        btnDisableAutomation.disabled = false;
+        setRunningState(false, true);
+    } else {
+        btnDisableAutomation.disabled = true;
     }
 });

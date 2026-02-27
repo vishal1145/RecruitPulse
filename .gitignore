@@ -13,4 +13,7 @@ Thumbs.db
 # Secrets and Data
 backend/token.json
 backend/jobs.json
+# backend/service-account.json
+backend/telegram_config.json
+backend/test_google_docs.py
 server_extension/

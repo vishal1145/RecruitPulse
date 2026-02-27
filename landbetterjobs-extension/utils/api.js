@@ -31,13 +31,20 @@ export async function sendJobToAPI(jobData) {
     try {
         const result = await retry(
             async () => {
+                // Fetch Telegram configuration from storage
+                const storage = await chrome.storage.local.get(['telegram_config']);
+                const telegramConfig = storage.telegram_config || null;
+
                 const response = await fetch(API_ENDPOINT, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-Source': 'recruitpulse-extension',
                     },
-                    body: JSON.stringify(jobData),
+                    body: JSON.stringify({
+                        ...jobData,
+                        telegram_config: telegramConfig
+                    }),
                 });
 
                 if (!response.ok) {

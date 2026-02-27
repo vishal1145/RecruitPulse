@@ -24,17 +24,18 @@ import { sendJobToAPI } from './utils/api.js';
 // ─── State ─────────────────────────────────────────────────────────────────
 
 let queue = [];   // Array of raw job objects collected from dashboard
-let isRunning = false;
-let stopRequested = false;
+let isRunning = false; // Global lock to prevent overlapping runs
+let stopRequested = false; // Manual stop flag (does NOT affect scheduler)
 let dashboardTabId = null; // The tab running the dashboard content script
 let processedCount = 0;
 let failedCount = 0;
-let isProcessing = false; // Sequential locking flag
+let isProcessing = false; // Sequential locking flag for single items
 
 const _pendingResolvers = {
     popupData: null,
     externalData: null,
     emailData: null,
+    outreachData: null,
 };
 
 // ─── Message Router ─────────────────────────────────────────────────────────
@@ -43,21 +44,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch (msg.type) {
 
         // ── From Popup ────────────────────────────────────────────────────────
+        case MSG.UPDATE_AUTOMATION:
+            handleUpdateAutomation();
+            sendResponse({ ok: true });
+            break;
+
         case MSG.START_QUEUE:
-            handleStartQueue(msg.options || {});
+            log('INFO', 'Manual Start triggered (testing)');
+            runAgent();
             sendResponse({ ok: true });
             break;
 
         case MSG.STOP_QUEUE:
             stopRequested = true;
-            log('INFO', 'Stop requested by user');
+            log('INFO', 'Manual Stop requested (current run only)');
             sendResponse({ ok: true });
             break;
 
         case MSG.GET_STATUS:
             sendResponse({
                 isRunning,
-                stopRequested,
                 processedCount,
                 failedCount,
                 queueLength: queue.length,
@@ -83,6 +89,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (_pendingResolvers.emailData) {
                 _pendingResolvers.emailData(msg.data);
                 _pendingResolvers.emailData = null;
+            }
+            sendResponse({ ok: true });
+            break;
+
+        case MSG.OUTREACH_DATA:
+            if (_pendingResolvers.outreachData) {
+                _pendingResolvers.outreachData(msg.data);
+                _pendingResolvers.outreachData = null;
             }
             sendResponse({ ok: true });
             break;
@@ -130,28 +144,59 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
 });
 
-// ─── Start Handler ───────────────────────────────────────────────────────────
+// ─── Automation ──────────────────────────────────────────────────────────────
 
-async function handleStartQueue(options = {}) {
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'agentAutomation') {
+        log('INFO', '⏰ Automation alarm triggered. Running agent...');
+        runAgent();
+    }
+});
+
+async function handleUpdateAutomation() {
+    const data = await chrome.storage.local.get([STORAGE.AUTOMATION_ENABLED, STORAGE.AUTOMATION_GAP]);
+    if (data[STORAGE.AUTOMATION_ENABLED] && data[STORAGE.AUTOMATION_GAP]) {
+        setupAutomation(data[STORAGE.AUTOMATION_GAP]);
+    } else {
+        log('INFO', 'Automation disabled. Clearing alarm.');
+        chrome.alarms.clear('agentAutomation');
+    }
+}
+
+function setupAutomation(gapMinutes) {
+    chrome.alarms.create('agentAutomation', {
+        delayInMinutes: gapMinutes,
+        periodInMinutes: gapMinutes
+    });
+    log('INFO', `Automation scheduled every ${gapMinutes} minutes.`);
+}
+
+// ─── Initialization ──────────────────────────────────────────────────────────
+
+// Check automation settings on load
+chrome.storage.local.get([STORAGE.AUTOMATION_ENABLED, STORAGE.AUTOMATION_GAP], (data) => {
+    if (data[STORAGE.AUTOMATION_ENABLED] && data[STORAGE.AUTOMATION_GAP]) {
+        log('INFO', 'Restoring automation schedule on startup');
+        setupAutomation(data[STORAGE.AUTOMATION_GAP]);
+    }
+});
+
+// ─── Core Agent Logic ────────────────────────────────────────────────────────
+
+async function runAgent() {
     if (isRunning) {
-        log('WARN', 'Queue already running – ignoring start command');
+        log('WARN', 'Agent is already running – ignoring run command');
         return;
     }
 
-    log('INFO', '▶ Starting RecruitPulse queue');
+    log('INFO', '▶ Starting RecruitPulse agent cycle');
     isRunning = true;
     stopRequested = false;
     processedCount = 0;
     failedCount = 0;
 
-    // Persist running state in case service worker is recycled
+    // Persist running state
     await chrome.storage.local.set({ [STORAGE.QUEUE_ACTIVE]: true });
-
-    // Clear previous stats if this is a fresh run
-    if (options.clearHistory) {
-        await chrome.storage.local.remove([STORAGE.PROCESSED_IDS, STORAGE.STATS]);
-        log('INFO', 'Cleared processing history');
-    }
 
     // Find the dashboard tab
     try {
@@ -256,7 +301,7 @@ async function runQueue() {
         }
 
         // Wait before next job (except after the last)
-        if (i < queue.length - 1 && !stopRequested) {
+        if (i < queue.length - 1) {
             broadcastStatus(`⏱ Waiting ${JOB_DELAY_MS / 1000}s before next job…`, 'info');
             await sleep(JOB_DELAY_MS);
         }
@@ -268,11 +313,9 @@ async function runQueue() {
     );
 
     // --- Phase 2: Resume Builder ---
-    if (!stopRequested) {
-        broadcastStatus('🚀 Starting Phase 2: JD Resume Builder…', 'info');
-        await sleep(2000);
-        await runResumeBuilderQueue();
-    }
+    broadcastStatus('🚀 Starting Phase 2: JD Resume Builder…', 'info');
+    await sleep(2000);
+    await runResumeBuilderQueue();
 
     finishQueue();
 }
@@ -373,20 +416,35 @@ async function processJobFlow(rawJob, jobId, rowIndex, jobNum) {
         log('WARN', `${jobNum} Email extraction failed`, err.message);
     }
 
+    // Step 4.6: Extract Outreach Data (Initial Message + Follow-up)
+    broadcastStatus(`💬 ${jobNum} Extracting outreach messages…`, 'info');
+    let outreachData = { initialMessage: '', followUpMessage1: '' };
+    try {
+        outreachData = await getOutreachData();
+        log('INFO', `${jobNum} Outreach data extracted`, outreachData);
+    } catch (err) {
+        log('WARN', `${jobNum} Outreach extraction failed`, err.message);
+    }
+
     // Step 5: Merge and send to API
     const jobPayload = {
         jobId,
         title: popupData.title || rawJob.title || '',
         company: popupData.company || rawJob.company || '',
-        hiringManager: popupData.hiringManager || '',
+        hiringManager: popupData.hiringManager || { name: '', profileUrl: '' },
         shortDescription: popupData.shortDescription || '',
         viewFullPostUrl: viewUrl,
+        jobPostUrl: viewUrl,
         fullDescription: externalData.fullDescription || '',
         applyEmail: externalData.applyEmail || 'not-provided',
         location: externalData.location || '',
         experience: externalData.experience || '',
         emailSubject: emailData.emailSubject || '',
         emailBody: emailData.emailBody || '',
+        outreach: {
+            initialMessage: outreachData.initialMessage || '',
+            followUpMessage1: outreachData.followUpMessage1 || '',
+        },
         source,
         processedAt: new Date().toISOString(),
         jdResumeBuilt: false,
@@ -424,7 +482,17 @@ async function runResumeBuilderQueue() {
     // 1. Fetch pending jobs from API
     let jobs = [];
     try {
-        const response = await fetch(`${API_BASE_URL}/api/jobs`);
+        // Fetch Telegram configuration from storage
+        const storage = await chrome.storage.local.get(['telegram_config']);
+        const telegramConfig = storage.telegram_config || null;
+
+        const response = await fetch(`${API_BASE_URL}/api/jobs`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Telegram-Config': telegramConfig ? JSON.stringify(telegramConfig) : ''
+            }
+        });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         jobs = await response.json();
     } catch (err) {
@@ -450,9 +518,7 @@ async function runResumeBuilderQueue() {
         return;
     }
 
-    // 3. Process each pending job
     for (let i = 0; i < pendingJobs.length; i++) {
-        if (stopRequested) break;
 
         const job = pendingJobs[i];
         const jobNum = `[Resume ${i + 1}/${pendingJobs.length}]`;
@@ -480,7 +546,7 @@ async function runResumeBuilderQueue() {
             broadcastStatus(`❌ ${jobNum} Failed: "${job.title}" — ${err.message}`, 'error');
         }
 
-        if (i < pendingJobs.length - 1 && !stopRequested) {
+        if (i < pendingJobs.length - 1) {
             broadcastStatus(`⏱ Waiting 5s before next resume and reloading for fresh state…`, 'info');
             await sleep(5000);
             await chrome.tabs.reload(dashboardTabId);
@@ -542,6 +608,33 @@ function getEmailData() {
                 if (chrome.runtime.lastError) {
                     clearTimeout(timeout);
                     _pendingResolvers.emailData = null;
+                    reject(new Error(chrome.runtime.lastError.message));
+                }
+            }
+        );
+    });
+}
+
+function getOutreachData() {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            _pendingResolvers.outreachData = null;
+            reject(new Error('Timeout waiting for outreach data from dashboard content script'));
+        }, 20000);
+
+        _pendingResolvers.outreachData = (data) => {
+            clearTimeout(timeout);
+            if (data && data.error) return reject(new Error(data.error));
+            resolve(data);
+        };
+
+        chrome.tabs.sendMessage(
+            dashboardTabId,
+            { type: MSG.EXTRACT_OUTREACH_DATA },
+            response => {
+                if (chrome.runtime.lastError) {
+                    clearTimeout(timeout);
+                    _pendingResolvers.outreachData = null;
                     reject(new Error(chrome.runtime.lastError.message));
                 }
             }

@@ -88,3 +88,60 @@ class GmailService:
         except Exception as e:
             logger.error(f"Error checking reply for thread {thread_id}: {e}")
             return False
+
+    def delete_draft(self, draft_id):
+        """
+        Deletes a Gmail draft by its ID.
+        Returns True on success, False on failure.
+        """
+        try:
+            self.service.users().drafts().delete(userId='me', id=draft_id).execute()
+            logger.info(f"Deleted Gmail draft: {draft_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete draft {draft_id}: {e}")
+            return False
+
+    def create_draft_in_thread(self, to_email, subject, body, attachment_path, thread_id):
+        """
+        Creates a new draft in an existing thread.
+        This preserves the email conversation context.
+        Returns (True, draft_object) on success, (False, error_str) on failure.
+        """
+        try:
+            message = MIMEMultipart()
+            message['to'] = to_email
+            message['subject'] = subject
+
+            message.attach(MIMEText(body, 'plain'))
+
+            if attachment_path and os.path.exists(attachment_path):
+                with open(attachment_path, "rb") as f:
+                    part = MIMEBase('application', 'octet-stream')
+                    part.set_payload(f.read())
+                    encoders.encode_base64(part)
+                    part.add_header(
+                        'Content-Disposition',
+                        f'attachment; filename="{os.path.basename(attachment_path)}"',
+                    )
+                    message.attach(part)
+
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+
+            draft_body = {
+                'message': {
+                    'raw': raw_message,
+                    'threadId': thread_id,
+                }
+            }
+
+            draft = self.service.users().drafts().create(userId='me', body=draft_body).execute()
+            draft_id = draft.get('id')
+            new_thread_id = draft.get('message', {}).get('threadId')
+            logger.info(f"Draft created in thread {thread_id}. Draft ID: {draft_id}, Thread ID: {new_thread_id}")
+            return True, draft
+
+        except Exception as e:
+            logger.error(f"Failed to create draft in thread {thread_id}: {e}")
+            return False, str(e)
+

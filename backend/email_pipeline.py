@@ -47,42 +47,62 @@ def send_email_with_attachment(job, pdf_path):
         logger.error(f"Error in Gmail draft creation pipeline: {e}")
         return False, {}
 
-def send_telegram_notification(message, document_path=None):
+def send_telegram_notification(message, document_path=None, reply_markup=None):
     """
     Sends a notification message or document to all configured Telegram chat IDs.
+    Optionally includes an inline keyboard via reply_markup.
     """
     bot_token = config.TELEGRAM_BOT_TOKEN
     chat_ids = config.TELEGRAM_CHAT_IDS
 
+    # Try to load dynamic config
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'telegram_config.json')
+    if os.path.exists(config_path):
+        import fcntl
+        import json
+        try:
+            with open(config_path, 'r') as f:
+                fcntl.flock(f, fcntl.LOCK_SH)
+                data = json.load(f)
+                if data.get("bot_token"):
+                    bot_token = data["bot_token"]
+                if data.get("chat_ids"):
+                    chat_ids = data["chat_ids"]
+        except Exception as e:
+            logger.error(f"Error loading dynamic telegram config: {e}")
+        finally:
+            try: fcntl.flock(f, fcntl.LOCK_UN)
+            except: pass
+
     if not bot_token or not chat_ids:
-        logger.warning("Telegram configuration is incomplete (missing token or chat IDs). Skipping.")
+        logger.warning("Telegram configuration is incomplete. Skipping.")
         return False
 
     success = True
     for chat_id in chat_ids:
         try:
             if document_path and os.path.exists(document_path):
-                # Send as document with caption
-                url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+                # Send text message first (with inline keyboard if provided), then document
+                msg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                msg_payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+                if reply_markup:
+                    msg_payload["reply_markup"] = reply_markup
+                requests.post(msg_url, json=msg_payload, timeout=10).raise_for_status()
+
+                doc_url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
                 with open(document_path, 'rb') as doc:
                     files = {'document': doc}
-                    data = {
-                        "chat_id": chat_id,
-                        "caption": message,
-                        "parse_mode": "HTML"
-                    }
-                    response = requests.post(url, data=data, files=files, timeout=20)
+                    doc_data = {"chat_id": chat_id, "caption": "📎 Resume PDF", "parse_mode": "HTML"}
+                    requests.post(doc_url, data=doc_data, files=files, timeout=20).raise_for_status()
             else:
-                # Send as simple message
+                # No document — send as simple message
                 url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-                payload = {
-                    "chat_id": chat_id,
-                    "text": message,
-                    "parse_mode": "HTML"
-                }
+                payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+                if reply_markup:
+                    payload["reply_markup"] = reply_markup
                 response = requests.post(url, json=payload, timeout=10)
+                response.raise_for_status()
 
-            response.raise_for_status()
             logger.info(f"Telegram notification sent successfully to {chat_id}.")
         except Exception as e:
             logger.error(f"Failed to send Telegram notification to {chat_id}: {e}")

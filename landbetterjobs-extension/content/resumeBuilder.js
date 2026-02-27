@@ -267,7 +267,12 @@ async function generateAndDownloadResumePDF(job) {
         log('INFO', `Extracted resume HTML (${resumeHtml.length} chars)`);
 
         // 2. Send to Backend
-        const API_URL = 'http://localhost:5350/api/generate-resume-pdf';
+        const API_URL = 'https://recruitpulse.algofolks.com/api/generate-resume-pdf';
+
+        // Fetch Telegram configuration from storage
+        const storage = await chrome.storage.local.get(['telegram_config']);
+        const telegramConfig = storage.telegram_config || null;
+
         const response = await fetch(API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -278,7 +283,8 @@ async function generateAndDownloadResumePDF(job) {
                 applyEmail: job.applyEmail,
                 emailSubject: job.emailSubject,
                 emailBody: job.emailBody,
-                resumeHtml: resumeHtml
+                resumeHtml: resumeHtml,
+                telegram_config: telegramConfig
             })
         });
 

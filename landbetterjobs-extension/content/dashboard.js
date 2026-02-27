@@ -17,6 +17,8 @@ const MSG = {
     JOB_POPUP_DATA: 'JOB_POPUP_DATA',
     EXTRACT_EMAIL_DATA: 'EXTRACT_EMAIL_DATA',
     EMAIL_DATA: 'EMAIL_DATA',
+    EXTRACT_OUTREACH_DATA: 'EXTRACT_OUTREACH_DATA',
+    OUTREACH_DATA: 'OUTREACH_DATA',
 
     // External tab <-> Background
     EXTERNAL_DATA: 'EXTERNAL_DATA',
@@ -223,6 +225,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 });
             return true;
 
+        case MSG.EXTRACT_OUTREACH_DATA:
+            handleOutreachExtraction()
+                .then(data => {
+                    log('INFO', 'Extracted outreach data', data);
+                    chrome.runtime.sendMessage({
+                        type: MSG.OUTREACH_DATA,
+                        data
+                    });
+                    sendResponse({ ok: true });
+                })
+                .catch(err => {
+                    log('ERROR', 'Failed to extract outreach data', err);
+                    chrome.runtime.sendMessage({
+                        type: MSG.OUTREACH_DATA,
+                        data: { error: err.message }
+                    });
+                    sendResponse({ ok: false, error: err.message });
+                });
+            return true;
+
         default:
             break;
     }
@@ -390,11 +412,120 @@ async function handleEmailExtraction() {
         log('INFO', `Extracted Email Data Successfully: ${emailSubject.slice(0, 30)}...`);
     }
 
-    // 6. Close the popup
+    // NOTE: Do NOT close popup here — outreach extraction needs it open
+    return { emailSubject, emailBody };
+}
+
+/**
+ * Switches to the Outreach tab in the popup and extracts initial + follow-up messages.
+ */
+async function handleOutreachExtraction() {
+    log('INFO', 'Starting outreach data extraction...');
+
+    // 1. Find the dialog strictly
+    const dialog = document.querySelector('[role="dialog"]');
+    if (!dialog) throw new Error('Popup/Dialog not found for outreach extraction');
+
+    // 2. Find and click Outreach tab
+    let outreachTabBtn = dialog.querySelector('[role="tab"][aria-controls*="outreach"]');
+
+    // Fallback: search by text content
+    if (!outreachTabBtn) {
+        const allTabs = Array.from(dialog.querySelectorAll('[role="tab"]'));
+        outreachTabBtn = allTabs.find(tab =>
+            (tab.innerText || tab.textContent || '').toLowerCase().includes('outreach')
+        );
+    }
+
+    if (!outreachTabBtn) {
+        log('WARN', 'Outreach tab button not found inside dialog');
+        return { initialMessage: '', followUpMessage1: '' };
+    }
+
+    log('INFO', 'Switching to Outreach tab...');
+    outreachTabBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await sleep(300);
+    simulateRealClick(outreachTabBtn);
+
+    // 3. Wait until tab becomes active
+    log('INFO', 'Waiting for Outreach tab activation...');
+    try {
+        await waitForCondition(() =>
+            outreachTabBtn.getAttribute("data-state") === "active",
+            5000
+        );
+        log('INFO', 'Outreach tab marked as "active"');
+    } catch (err) {
+        log('WARN', 'Outreach tab activation timeout, proceeding anyway...');
+    }
+
+    // 4. Wait for content render inside dialog
+    const textarea = await waitForElement('textarea', dialog, 5000);
+    if (!textarea) {
+        log('WARN', 'Outreach textareas did not appear in time');
+        return { initialMessage: '', followUpMessage1: '' };
+    }
+
+    await sleep(800); // UI breathing room
+
+    // 5. Extract messages using the actual DOM structure:
+    //    Each message block is: <div class="space-y-2">
+    //      <div class="flex items-center justify-between">
+    //        <label class="text-sm font-medium">Label Text</label>
+    //      </div>
+    //      <div class="relative">
+    //        <textarea>...</textarea>
+    //      </div>
+    //    </div>
+    let initialMessage = '';
+    let followUpMessage1 = '';
+
+    const messageBlocks = Array.from(dialog.querySelectorAll('div.space-y-2'));
+    log('INFO', `Found ${messageBlocks.length} space-y-2 message blocks`);
+
+    for (const block of messageBlocks) {
+        const label = block.querySelector('label.text-sm.font-medium');
+        if (!label) continue;
+
+        const labelText = (label.innerText || label.textContent || '').trim().toLowerCase();
+        const ta = block.querySelector('textarea');
+        if (!ta) continue;
+
+        log('INFO', `Found label: "${labelText}" with textarea (${ta.value.length} chars)`);
+
+        if (labelText === 'initial message') {
+            initialMessage = ta.value.trim();
+            log('INFO', `Extracted Initial Message (${initialMessage.length} chars)`);
+        } else if (labelText === 'follow-up message 1') {
+            followUpMessage1 = ta.value.trim();
+            log('INFO', `Extracted Follow-up Message 1 (${followUpMessage1.length} chars)`);
+        }
+    }
+
+    // Fallback: if blocks didn't work, try by label text matching
+    if (!initialMessage && !followUpMessage1) {
+        const allLabels = Array.from(dialog.querySelectorAll('label'));
+        for (const label of allLabels) {
+            const labelText = (label.innerText || '').trim().toLowerCase();
+            // Walk up to parent space-y-2, then find textarea
+            const parentBlock = label.closest('.space-y-2') || label.parentElement?.parentElement;
+            const ta = parentBlock ? parentBlock.querySelector('textarea') : null;
+            if (!ta) continue;
+
+            if (labelText.includes('initial message')) {
+                initialMessage = ta.value.trim();
+            } else if (labelText.includes('follow-up message 1')) {
+                followUpMessage1 = ta.value.trim();
+            }
+        }
+        log('INFO', `Fallback label scan: initial=${initialMessage.length}chars, followup=${followUpMessage1.length}chars`);
+    }
+
+    // 6. Close the popup after extraction
     await closePopup(dialog);
     await sleep(500);
 
-    return { emailSubject, emailBody };
+    return { initialMessage, followUpMessage1 };
 }
 
 /**
@@ -500,28 +631,107 @@ async function extractFromPopup(popup) {
     ) || safeText(findFirst(['h1', 'h2', 'h3', '[class*="title"]'], popup));
 
     // Hiring Manager
-    // Strategy: Find the "Hiring Manager" header, then look for the name in the siblings/children below it.
+    // DOM: <h3 class="text-lg font-semibold mb-3">Hiring Manager</h3>
+    //       <div class="bg-muted/50 rounded-lg p-4">
+    //         <h4 class="font-semibold text-lg">Name's</h4>
+    //         <button>View Profile</button>
     let hiringManager = '';
-    const allDivs = Array.from(popup.querySelectorAll('div'));
-    const managerHeaderIdx = allDivs.findIndex(d => d.innerText.toLowerCase().includes('hiring manager'));
+    let hiringManagerProfileUrl = '';
 
-    if (managerHeaderIdx !== -1) {
-        // Look at the next few divs for a name candidate (not "N/A" or empty)
-        for (let i = 1; i <= 3; i++) {
-            const candidate = allDivs[managerHeaderIdx + i];
-            if (candidate) {
-                const txt = safeText(candidate);
-                // Simple heuristic: 2-3 words, no special chars, not "Hiring Manager"
-                if (txt && txt.length > 3 && txt.length < 30 && !txt.includes('Hiring Manager')) {
-                    hiringManager = txt.replace(/'s$/, '').trim(); // Remove possessive "Kajal Bhatt's" -> "Kajal Bhatt"
-                    break;
+    // Step 1: Find the h3 that says "Hiring Manager"
+    const allH3s = Array.from(popup.querySelectorAll('h3'));
+    const hmH3 = allH3s.find(h3 => {
+        const txt = (h3.innerText || h3.textContent || '').trim();
+        return txt === 'Hiring Manager';
+    });
+
+    if (hmH3) {
+        // Step 2: The name is inside the next sibling container (bg-muted card)
+        const hmContainer = hmH3.nextElementSibling;
+        if (hmContainer) {
+            // Look for h4 with the name
+            const nameEl = hmContainer.querySelector('h4.font-semibold');
+            if (nameEl) {
+                // Strip possessive 's — handle both ASCII ' and Unicode \u2019 (right single quote)
+                hiringManager = safeText(nameEl)
+                    .replace(/[\u2018\u2019']s$/i, '')
+                    .trim();
+                log('INFO', `Hiring Manager Name: "${hiringManager}"`);
+            }
+
+            // Look for "View Profile" button/link
+            const allBtnsAndLinks = Array.from(hmContainer.querySelectorAll('button, a'));
+            const viewProfileBtn = allBtnsAndLinks.find(el =>
+                (el.innerText || '').toLowerCase().includes('view profile')
+            );
+            if (viewProfileBtn) {
+                // Direct href (if it's an <a>)
+                hiringManagerProfileUrl = viewProfileBtn.href || viewProfileBtn.getAttribute('href') || '';
+
+                // Check common data attributes
+                if (!hiringManagerProfileUrl) {
+                    const attrs = ['data-url', 'data-href', 'url', 'href', 'data-link'];
+                    for (const attr of attrs) {
+                        const val = viewProfileBtn.getAttribute(attr);
+                        if (val && val.startsWith('http')) {
+                            hiringManagerProfileUrl = val;
+                            break;
+                        }
+                    }
                 }
+
+                // If still no URL, use MAIN world interception (same as View Full Post)
+                if (!hiringManagerProfileUrl) {
+                    log('INFO', 'View Profile has no href — using MAIN world interception...');
+
+                    // 1. Tell background to prep the MAIN world interceptor
+                    await chrome.runtime.sendMessage({ type: MSG.PREPARE_INTERCEPTION });
+
+                    // 2. Click the button
+                    log('INFO', 'Clicking "View Profile" button...');
+                    viewProfileBtn.click();
+
+                    // 3. Poll for result (DOM-based bridge via data-rp-url)
+                    for (let i = 0; i < 20; i++) {
+                        await sleep(100);
+                        hiringManagerProfileUrl = document.body.getAttribute('data-rp-url') || '';
+                        if (hiringManagerProfileUrl) break;
+                    }
+
+                    // 4. Tell background to cleanup
+                    await chrome.runtime.sendMessage({ type: MSG.CLEANUP_INTERCEPTION });
+
+                    log('INFO', hiringManagerProfileUrl
+                        ? `View Profile intercepted → ${hiringManagerProfileUrl}`
+                        : 'View Profile window.open NOT called by button');
+                }
+
+                log('INFO', `Hiring Manager Profile URL: "${hiringManagerProfileUrl}"`);
             }
         }
     }
-    // Fallback regex
+
+    // Fallback: scan all divs (old approach)
     if (!hiringManager) {
-        hiringManager = extractField(bodyText, /Hiring\s*Manager\s*[:]\s*([^\n]+)/i);
+        const allDivs = Array.from(popup.querySelectorAll('div'));
+        const managerHeaderIdx = allDivs.findIndex(d => {
+            const txt = (d.innerText || '').trim();
+            return txt === 'Hiring Manager';
+        });
+        if (managerHeaderIdx !== -1) {
+            for (let i = 1; i <= 5; i++) {
+                const candidate = allDivs[managerHeaderIdx + i];
+                if (candidate) {
+                    const h4 = candidate.querySelector('h4');
+                    if (h4) {
+                        hiringManager = safeText(h4)
+                            .replace(/[\u2018\u2019']s$/i, '')
+                            .trim();
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     // Company
@@ -639,7 +849,10 @@ async function extractFromPopup(popup) {
     return {
         title: title || 'Unknown Title',
         company: company || 'Confidential',
-        hiringManager: hiringManager || 'N/A',
+        hiringManager: {
+            name: hiringManager || 'N/A',
+            profileUrl: hiringManagerProfileUrl || '',
+        },
         shortDescription,
         viewFullPostUrl,
     };

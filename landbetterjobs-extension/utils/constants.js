@@ -4,7 +4,7 @@
  * Modify API_BASE_URL to point to your backend.
  */
 
-export const API_BASE_URL = 'http://localhost:5350';
+export const API_BASE_URL = 'https://recruitpulse.algofolks.com';
 export const API_ENDPOINT = `${API_BASE_URL}/api/jobs`;
 export const API_TEST_RESET_URL = `${API_BASE_URL}/api/test/reset-jobs`;
 
@@ -38,6 +38,8 @@ export const MSG = Object.freeze({
   COLLECT_JOBS: 'COLLECT_JOBS',
   CLICK_JOB_ACTION: 'CLICK_JOB_ACTION',
   EXTRACT_EMAIL_DATA: 'EXTRACT_EMAIL_DATA',
+  EXTRACT_OUTREACH_DATA: 'EXTRACT_OUTREACH_DATA',
+  OUTREACH_DATA: 'OUTREACH_DATA',
   BUILD_RESUME: 'BUILD_RESUME',
   DOWNLOAD_FILE: 'DOWNLOAD_FILE',
 
@@ -54,6 +56,9 @@ export const MSG = Object.freeze({
   // Background → Popup
   STATUS_UPDATE: 'STATUS_UPDATE',
   QUEUE_STATE: 'QUEUE_STATE',
+
+  // Automation
+  UPDATE_AUTOMATION: 'UPDATE_AUTOMATION',
 });
 
 // Storage keys
@@ -61,6 +66,8 @@ export const STORAGE = Object.freeze({
   PROCESSED_IDS: 'recruitpulse_processed_ids',
   QUEUE_ACTIVE: 'recruitpulse_queue_active',
   STATS: 'recruitpulse_stats',
+  AUTOMATION_GAP: 'automationGapMinutes',
+  AUTOMATION_ENABLED: 'automationEnabled',
 });
 
 // CSS selectors for the LandBetterJobs dashboard
