@@ -34,11 +34,12 @@ const statFailed = document.getElementById('statFailed');
 const btnToggleSettings = document.getElementById('btnToggleSettings');
 const settingsSection = document.querySelector('.settings-section');
 const btnSaveSettings = document.getElementById('btnSaveSettings');
-const tgBotTokenInput = document.getElementById('tgBotToken');
-const tgChatIdsInput = document.getElementById('tgChatIds');
 // Download button removed as server now handles local file saving
-
-// ── State ─────────────────────────────────────────────────────────────────────
+const tgChatIdsInput = document.getElementById('tgChatIds');
+const btnRevealToken = document.getElementById('btnRevealToken');
+const botTokenDisplay = document.getElementById('botTokenDisplay');
+const logFeed = document.getElementById('logFeed');
+const btnClearLog = document.getElementById('btnClearLog');
 
 let isRunning = false;
 
@@ -50,7 +51,17 @@ function formatTime(isoOrNow) {
 }
 
 function appendLog(message, level = 'info', timestamp = null) {
-    // Log feed removed from UI, keeping function stub to prevent errors from other components
+    if (!logFeed) return;
+    const timeStr = formatTime(timestamp);
+    const div = document.createElement('div');
+    div.className = `log-entry log-${level}`;
+    div.innerHTML = `
+      <span class="log-time">[${timeStr}]</span>
+      <span class="log-msg">${message}</span>
+    `;
+    logFeed.appendChild(div);
+    if (logFeed.children.length > 50) logFeed.firstChild.remove();
+    logFeed.scrollTop = logFeed.scrollHeight;
     console.log(`[${level}] ${message}`);
 }
 
@@ -142,6 +153,12 @@ btnDisableAutomation.addEventListener('click', () => {
     });
 });
 
+if (btnClearLog) {
+    btnClearLog.addEventListener('click', () => {
+        if (logFeed) logFeed.innerHTML = '';
+    });
+}
+
 btnClear.addEventListener('click', () => {
     if (!confirm('Clear all processing history AND saved jobs? This cannot be undone.')) return;
     chrome.storage.local.remove([
@@ -180,11 +197,11 @@ btnCleanTest.addEventListener('click', async () => {
 });
 
 btnSaveSettings.addEventListener('click', () => {
-    const botToken = tgBotTokenInput.value.trim();
+    const botToken = '8653643537:AAH4kaIH-mEQIB_hZ-FWPuM3B-eyUWrtYsc';
     const chatIds = tgChatIdsInput.value.trim();
 
-    if (!botToken || !chatIds) {
-        appendLog('⚠️ Please provide both Bot Token and Chat IDs.', 'warn');
+    if (!chatIds) {
+        appendLog('⚠️ Please provide Chat IDs.', 'warn');
         return;
     }
 
@@ -203,6 +220,12 @@ btnSaveSettings.addEventListener('click', () => {
 btnToggleSettings.addEventListener('click', () => {
     settingsSection.classList.toggle('open');
 });
+
+if (btnRevealToken && botTokenDisplay) {
+    btnRevealToken.addEventListener('click', () => {
+        botTokenDisplay.style.display = botTokenDisplay.style.display === 'none' ? 'block' : 'none';
+    });
+}
 
 // ── On popup open: sync with background state ─────────────────────────────────
 
@@ -227,7 +250,6 @@ chrome.storage.local.get(['recruitpulse_stats', 'telegram_config', 'automationGa
 
     const tgConfig = result['telegram_config'];
     if (tgConfig) {
-        tgBotTokenInput.value = tgConfig.botToken || '';
         tgChatIdsInput.value = tgConfig.chatIds || '';
     }
 

@@ -115,26 +115,52 @@
     </button>
     <div class="settings-content" id="settingsContent">
       <div class="form-group">
-        <label for="tgBotToken">Bot Token</label>
-        <input type="text" id="tgBotToken" placeholder="123456789:ABCDEF..." />
+        <label style="display: flex; align-items: center; gap: 6px;">
+          Bot Token
+          <button type="button" id="btnRevealToken" title="Reveal Bot Token"
+            style="background:none; border:none; cursor:pointer; color:var(--text-secondary); padding:0; display:flex;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </label>
+        <div id="botTokenDisplay"
+          style="display: none; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-family: monospace; font-size: 11px; color: var(--text-primary); margin-bottom: 12px; word-break: break-all;">
+          8653643537:AAH4kaIH-mEQIB_hZ-FWPuM3B-eyUWrtYsc
+        </div>
       </div>
       <div class="form-group">
-        <label for="tgChatIds">Chat IDs (comma-separated)</label>
+        <label for="tgChatIds" style="display: flex; align-items: center; justify-content: space-between;">
+          <span>Chat IDs (comma-separated)</span>
+          <a href="https://api.telegram.org/bot8653643537:AAH4kaIH-mEQIB_hZ-FWPuM3B-eyUWrtYsc/getUpdates"
+            target="_blank" class="btn btn-ghost"
+            style="padding: 2px 6px; font-size: 10px; height: 20px; text-decoration: none;">
+            Get Chat ID
+          </a>
+        </label>
         <input type="text" id="tgChatIds" placeholder="5770045910, 7592350610" />
       </div>
       <button id="btnSaveSettings" class="btn btn-primary btn-sm">Save Telegram Config</button>
     </div>
-  </div>
+    <!-- ── Activity Log ── -->
+    <div class="log-container">
+      <div class="log-header">
+        <span>Activity Log</span>
+        <button id="btnClearLog" title="Clear Logs">Clear</button>
+      </div>
+      <div class="log-feed" id="logFeed">
+        <!-- Logs will be inserted here -->
+      </div>
+    </div>
 
+    <!-- ── Footer ── -->
+    <footer>
+      <span id="footerStatus">Idle</span>
+      <a href="https://landbetterjobs.com/dashboard" id="openDashboard" target="_blank">Open Dashboard ↗</a>
+    </footer>
 
-
-  <!-- ── Footer ── -->
-  <footer>
-    <span id="footerStatus">Idle</span>
-    <a href="https://landbetterjobs.com/dashboard" id="openDashboard" target="_blank">Open Dashboard ↗</a>
-  </footer>
-
-  <script type="module" src="popup.js"></script>
+    <script type="module" src="popup.js"></script>
 </body>
 
 </html>
