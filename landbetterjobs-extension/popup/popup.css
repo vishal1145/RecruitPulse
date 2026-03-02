@@ -433,6 +433,7 @@ footer a:hover {
   min-width: 140px;
   margin-top: 4px;
 }
+
 /* ── Activity Log ────────────────────────────────────────────────────────── */
 .log-container {
   display: flex;
@@ -481,12 +482,18 @@ footer a:hover {
 .log-feed::-webkit-scrollbar {
   width: 6px;
 }
+
 .log-feed::-webkit-scrollbar-track {
   background: transparent;
 }
+
 .log-feed::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 4px;
+}
+
+#btnClear {
+  display: none !important;
 }
 
 .log-entry {
@@ -501,7 +508,9 @@ footer a:hover {
 }
 
 @keyframes fadeIn {
-  to { opacity: 1; }
+  to {
+    opacity: 1;
+  }
 }
 
 .log-time {
@@ -513,8 +522,23 @@ footer a:hover {
   color: var(--text-primary);
 }
 
-.log-info .log-msg { color: #818cf8; }
-.log-success .log-msg { color: var(--success); }
-.log-warn .log-msg { color: var(--warn); }
-.log-error .log-msg { color: var(--danger); }
-.log-complete .log-msg { color: #a855f7; font-weight: 600; }
+.log-info .log-msg {
+  color: #818cf8;
+}
+
+.log-success .log-msg {
+  color: var(--success);
+}
+
+.log-warn .log-msg {
+  color: var(--warn);
+}
+
+.log-error .log-msg {
+  color: var(--danger);
+}
+
+.log-complete .log-msg {
+  color: #a855f7;
+  font-weight: 600;
+}
