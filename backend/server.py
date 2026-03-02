@@ -429,40 +429,7 @@ def reset_jobs_for_testing():
     Cleans jobs.json and pastes a predefined test job record.
     """
     try:
-        test_jobs = [
-             {
-            "applyEmail": "rajat.srivastava@algofolks.com",
-            "company": "Frido",
-            "emailBody": "Dear Shubham Somalkar,\n\nMy name is Gautham Madhu, and I am a Product Manager at Axis Bank with 5-10 years of experience in leadership, risk management, and optimizing digital performance metrics. I am writing to express my strong interest in the Manager \u2013 Costing (CMA) position at Frido, which I believe aligns perfectly with my professional background and career aspirations.\n\nDuring my tenure at Axis Bank, I've gained significant experience in understanding financial operations, managing complex projects, and utilizing data to drive strategic decisions. Prior to this, as a Team Lead at J. Edgerton Consulting for seven years, and a Resolutions Team Lead at Mount Rose Technologies, I honed my skills in staff management, effective time management, and fostering high-performing teams, which are crucial for a managerial role at Frido.\n\nI am particularly adept at risk management and understanding digital performance metrics, skills that are directly transferable to optimizing costing strategies and ensuring financial efficiency within your organization. My ability to communicate effectively in English, Spanish, Polish, and French also provides a valuable asset for a company with diverse operations or international collaborations.\n\nI am confident that my leadership capabilities, coupled with my analytical mindset and commitment to driving results, make me a strong candidate for this role. I am eager to learn more about Frido's mission and discuss how my skills and experience can contribute to your team's success.\n\nWould you be available for a brief call next week to explore this opportunity further?\n\nThank you for your time and consideration.\n\nSincerely,\nGautham Madhu\ngauthammadhu27@gmail.com",
-            "emailSent": False,
-            "emailSubject": "Experienced PM (Axis Bank) interested in Manager \u2013 Costing (CMA) at Frido - Gautham Madhu",
-            "experience": "",
-            "fullDescription": "Make the most of your professional life\nEmail or phone number\nPassword\nShow\nRemember me\n\nAgree & Join LinkedIn\n\nBy clicking Continue, you agree to LinkedIn\u2019s User Agreement, Privacy Policy, and Cookie Policy.\n\nBy clicking Agree & Join or Continue, you agree to the LinkedIn User Agreement, Privacy Policy, and Cookie Policy.\n\nAgree & Join\nor\nContinue with Google\n\nAlready on LinkedIn? Sign in\n\nLooking to create a page for a business? Get help\n\nLinkedIn\n\u00a9 2026\nAbout\nAccessibility\nUser Agreement\nPrivacy Policy\nCookie Policy\nCopyright Policy\nBrand Policy\nGuest Controls\nCommunity Guidelines\nLanguage",
-            "hiringManager": {
-                "name": "Shubham Somalkar",
-                "profileUrl": "https://www.linkedin.com/in/shubham-somalkar-76b04016b?miniProfileUrn=urn%3Ali%3Afsd_profile%3AACoAAChn-EMBK6V6rG3EutZVMuEzojEHKT8CXKk"
-            },
-            "jdResumeBuilt": False,
-            "jobId": "job_993125625",
-            "jobPostUrl": "https://www.linkedin.com/feed/update/urn:li:activity:7430877585212903425",
-            "location": "",
-            "outreach": {
-                "followUpMessage1": "Hi Shubham, following up on my interest in the Manager \u2013 Costing (CMA) role. My experience as a Team Lead at J. Edgerton Consulting, where I managed teams and improved processes, directly translates to the leadership and strategic costing responsibilities at Frido. I'm confident in my ability to drive efficiency.",
-                "initialMessage": "Hello Shubham, I'm Gautham Madhu, a Product Manager at Axis Bank with 5-10 years experience, and I'm very interested in the Manager \u2013 Costing (CMA) role at Frido. My leadership, risk management, and digital performance metrics skills, honed at Axis Bank and J. Edgerton Consulting, align strongly with the requirements. I'd love to connect and discuss how I can contribute to Frido's success."
-            },
-            "processedAt": "2026-02-25T13:01:16.259Z",
-            "shortDescription": "5\u201310 years | Manufacturing / Product-based industry preferredStrong exposure to product costing, inventory, MIS & margin analysis required.Interested candidates can share their resume at:shubham.somalkar@myfrido.com or ari...",
-            "source": "linkedin",
-            "telegram_config": {
-                "botToken": "8653643537:AAH4kaIH-mEQIB_hZ-FWPuM3B-eyUWrtYsc",
-                "chatIds": "5770045910,5770045911"
-            },
-            "title": "Manager \u2013 Costing (CMA)",
-            "updatedAt": "2026-02-25T13:02:05.549878",
-            "viewFullPostUrl": "https://www.linkedin.com/feed/update/urn:li:activity:7430877585212903425",
-            "jdResumeBuiltAt": "2026-02-25T13:02:05.544Z"
-        }
-        ]
+        test_jobs = []
         save_jobs_to_json(test_jobs)
 
         # Handle Telegram config update from query/headers if present
