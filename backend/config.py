@@ -58,3 +58,6 @@ def get_service_account_info():
 
 # OpenAI Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Supabase Configuration
+SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")

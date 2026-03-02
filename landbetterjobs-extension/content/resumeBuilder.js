@@ -105,7 +105,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 });
 
+let isResumeProcessing = false;
+
 async function handleBuildResume(job) {
+    if (isResumeProcessing) {
+        log('WARN', 'Resume build already in progress. Ignoring new request.');
+        return { success: false, error: 'Build in progress' };
+    }
+    isResumeProcessing = true;
     log('INFO', `Starting resume build for: ${job.title} @ ${job.company}`);
 
     try {
@@ -227,14 +234,97 @@ async function handleBuildResume(job) {
             await sleep(1000); // Give scroll time to finish seamlessly
             simulateRealClick(applyBtn);
             await sleep(1500);
+
+            // Wait for generation to actually finish
+            log('INFO', 'Waiting for AI generation to fully complete (button disabled -> enabled/hidden)...');
+            await waitForCondition(() => {
+                const btn = findSpecificApplyBtn();
+                // We consider it done if the button is no longer there or it is no longer disabled
+                return !btn || !btn.disabled;
+            }, 60000); // wait up to 60s
+            log('INFO', 'AI generation likely completed (Apply button enabled or hidden).');
         } else {
             log('WARN', '"Apply All Suggestions" button not found after 30 seconds. Continuing safely.');
         }
 
-        // 8. Automatic PDF Generation & Download (Backend-driven)
+        // 8. Capture Resume ID directly from Supabase API (no separate Telegram message)
+        let resumeEditUrl = null;
+        try {
+            log('INFO', 'Attempting to capture Resume ID directly from Supabase...');
+
+            // Extract user ID and access token from Supabase auth in localStorage
+            let userId = null;
+            let accessToken = null;
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key.includes('-auth-token')) {
+                    try {
+                        const val = JSON.parse(localStorage.getItem(key));
+                        if (val && val.user && val.user.id) {
+                            userId = val.user.id;
+                        }
+                        if (val && val.access_token) {
+                            accessToken = val.access_token;
+                        }
+                        if (userId && accessToken) break;
+                    } catch (e) { }
+                }
+            }
+
+            if (!userId || !accessToken) {
+                log('WARN', 'Could not extract user_id or access_token from localStorage');
+            } else {
+                const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImloYmdrdXl1cWhvcnpvYnZycGJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk3MzMzMjMsImV4cCI6MjA3NTMwOTMyM30.ktW1E86F3gUH5czAZFDzezug3Veh8V4QNEwdadVi_WM';
+                const supabaseUrl = `https://ihbgkuyuqhorzobvrpbh.supabase.co/rest/v1/tailored_resumes?select=id%2Ctitle%2Cposition%2Ccompany_name%2Ccreated_at%2Cupdated_at%2Ckeyword_score%2Ccover_letter&user_id=eq.${encodeURIComponent(userId)}&order=updated_at.desc&limit=1`;
+
+                const supaResp = await fetch(supabaseUrl, {
+                    method: 'GET',
+                    headers: {
+                        'accept': '*/*',
+                        'accept-profile': 'public',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'authorization': `Bearer ${accessToken}`,
+                        'x-client-info': 'supabase-js-web/2.58.0'
+                    }
+                });
+
+                if (!supaResp.ok) {
+                    log('WARN', `Supabase API returned ${supaResp.status}: ${await supaResp.text()}`);
+                } else {
+                    const resumes = await supaResp.json();
+                    if (resumes && resumes.length > 0) {
+                        const resumeId = resumes[0].id;
+                        resumeEditUrl = `https://landbetterjobs.com/resumes/${resumeId}`;
+                        log('INFO', `Captured resume ID: ${resumeId}, Edit URL: ${resumeEditUrl}`);
+
+                        // Persist resume_id in backend jobs.json
+                        try {
+                            await fetch('https://recruitpulse.algofolks.com/api/capture-resume-id', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    resume_id: resumeId,
+                                    edit_url: resumeEditUrl,
+                                    job_id: job.jobId
+                                })
+                            });
+                            log('INFO', `Persisted resumeId=${resumeId} for jobId=${job.jobId}`);
+                        } catch (e) {
+                            log('WARN', `Failed to persist resume ID: ${e.message}`);
+                        }
+                    } else {
+                        log('WARN', 'No resumes found in Supabase for this user');
+                    }
+                }
+            }
+        } catch (e) {
+            log('ERROR', `Error capturing resume ID: ${e.message}`);
+        }
+
+        // 9. Automatic PDF Generation & Download (Backend-driven)
         try {
             log('INFO', 'Starting automatic backend PDF generation...');
-            const exportResult = await generateAndDownloadResumePDF(job);
+            const exportResult = await generateAndDownloadResumePDF(job, resumeEditUrl);
             log('INFO', 'PDF generation result:', exportResult);
         } catch (err) {
             log('ERROR', `Automatic PDF generation failed (non-blocking): ${err.message}`);
@@ -246,6 +336,9 @@ async function handleBuildResume(job) {
     } catch (err) {
         log('ERROR', `Resume build failed: ${err.message}`);
         throw err;
+    } finally {
+        isResumeProcessing = false;
+        log('INFO', 'Resume execution lock released.');
     }
 }
 
@@ -253,7 +346,7 @@ async function handleBuildResume(job) {
  * Modern Backend-Driven PDF Generation Pipeline
  * Extracts HTML, sends to backend for PDF generation and automatic emailing.
  */
-async function generateAndDownloadResumePDF(job) {
+async function generateAndDownloadResumePDF(job, resumeEditUrl = null) {
     log('INFO', `Requesting backend PDF & Email pipeline for: ${job.title}`);
 
     try {
@@ -284,6 +377,7 @@ async function generateAndDownloadResumePDF(job) {
                 emailSubject: job.emailSubject,
                 emailBody: job.emailBody,
                 resumeHtml: resumeHtml,
+                resumeEditUrl: resumeEditUrl,
                 telegram_config: telegramConfig
             })
         });
@@ -321,3 +415,71 @@ async function generateAndDownloadResumePDF(job) {
 
 // Expose for testing
 window.generateAndDownloadResumePDF = generateAndDownloadResumePDF;
+
+// ─── Phase 2: Resume HTML Extraction on /resumes/* pages ─────────────────────
+// Handles two flows:
+//   A) Background-triggered (Telegram → pending action): EXTRACT_RESUME_HTML message
+//   B) Manual "Export PDF" click: extracts HTML → sends to /api/update-draft
+
+(function initResumePageHandlers() {
+    const resumeMatch = window.location.pathname.match(/^\/resumes\/([a-f0-9-]+)/i);
+    if (!resumeMatch) return;
+
+    const pageResumeId = resumeMatch[1];
+    log('INFO', `[ResumePage] Active on resume page: ${pageResumeId}`);
+
+    let linkedJobId = null;
+    let isUpdateInProgress = false;
+
+    // 1. Look up the job_id for this resume from the backend
+    async function lookupJobId() {
+        try {
+            const resp = await fetch(`https://recruitpulse.algofolks.com/api/job-by-resume/${pageResumeId}`);
+            const data = await resp.json();
+            if (data.success && data.job) {
+                linkedJobId = data.job.jobId;
+                log('INFO', `[ResumePage] Linked to jobId: ${linkedJobId} (company: ${data.job.company})`);
+            } else {
+                log('WARN', `[ResumePage] No job found for resumeId ${pageResumeId}`);
+            }
+        } catch (e) {
+            log('ERROR', `[ResumePage] Failed to lookup job: ${e.message}`);
+        }
+    }
+
+    // 2. Extract resume HTML from the page
+    function extractResumeHtml() {
+        const resumePreview = document.querySelector('div#resume-preview');
+        if (resumePreview) {
+            return resumePreview.outerHTML;
+        }
+        log('WARN', '[ResumePage] div#resume-preview not found, trying fallback selectors');
+        const fallbacks = ['div.resume-preview', 'div[class*="resume"]', 'main', 'article'];
+        for (const sel of fallbacks) {
+            const el = document.querySelector(sel);
+            if (el) return el.outerHTML;
+        }
+        return null;
+    }
+
+    // 3. Handle EXTRACT_RESUME_HTML from background.js (Telegram-initiated flow)
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+        if (msg.type === 'EXTRACT_RESUME_HTML') {
+            log('INFO', '[ResumePage] Received EXTRACT_RESUME_HTML from background');
+            const html = extractResumeHtml();
+            if (html) {
+                log('INFO', `[ResumePage] Extracted HTML (${html.length} chars)`);
+                sendResponse({ html: html });
+            } else {
+                log('ERROR', '[ResumePage] Could not find resume content on page');
+                sendResponse({ error: 'Resume preview container not found on page' });
+            }
+        }
+        return true;
+    });
+
+    // Initialize
+    lookupJobId();
+
+    log('INFO', '[ResumePage] Resume page handlers initialized.');
+})();

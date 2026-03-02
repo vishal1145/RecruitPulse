@@ -6,11 +6,13 @@ import requests as http_requests
 from datetime import datetime
 import fcntl
 import logging
+import base64 as b64
+import threading
+import time
 from job_email_service import JobEmailService
 from pdf_service import PdfService
 import email_pipeline
 import config
-import google_docs_service
 from gmail_service import GmailService
 import scheduler  # Starts APScheduler background job on import
 
@@ -19,6 +21,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB for PDF base64 payloads
 # Enable CORS for all origins so the extension can POST data
 CORS(app)
 
@@ -199,9 +202,10 @@ def save_job():
                 
                 # [BUG FIX] Preserve backend-managed fields that the extension doesn't send
                 backend_fields = [
-                    'gmailDraftId', 'gmailThreadId', 'googleDocId',
+                    'gmailDraftId', 'gmailThreadId',
                     'draftCreated', 'draftCreatedAt',
                     'followUpDays', 'followUpSent', 'lastFollowUpAt', 'replyReceived',
+                    'resumeId', 'resumeEditUrl',
                 ]
                 for field in backend_fields:
                     if field in existing_job and field not in data:
@@ -254,6 +258,7 @@ def generate_resume_pdf():
         job_id = data.get('jobId', 'unknown')
         title = data.get('title', 'Resume')
         company = data.get('company', 'Company')
+        resume_edit_url = data.get('resumeEditUrl')
         telegram_config = data.get('telegram_config')
 
         if telegram_config:
@@ -307,42 +312,7 @@ def generate_resume_pdf():
             # 4. Update jobs.json with draft metadata + follow-up defaults
             _update_job_with_draft_metadata(job_id, draft_metadata)
 
-            # 5. Create Google Doc version of the resume
-            google_doc_id = None
-            google_doc_url = None
-            try:
-                # Extract clean plain text from HTML for the Google Doc
-                import re
-                clean_html = html_content
-                # 1. Remove <style>...</style> and <script>...</script> blocks entirely
-                clean_html = re.sub(r'<style[^>]*>.*?</style>', '', clean_html, flags=re.DOTALL | re.IGNORECASE)
-                clean_html = re.sub(r'<script[^>]*>.*?</script>', '', clean_html, flags=re.DOTALL | re.IGNORECASE)
-                # 2. Replace <br>, <br/>, </p>, </div>, </li>, </h1-6> with newlines
-                clean_html = re.sub(r'<br\s*/?>', '\n', clean_html, flags=re.IGNORECASE)
-                clean_html = re.sub(r'</(?:p|div|li|h[1-6]|tr)>', '\n', clean_html, flags=re.IGNORECASE)
-                # 3. Replace bullet list items with a bullet character
-                clean_html = re.sub(r'<li[^>]*>', '• ', clean_html, flags=re.IGNORECASE)
-                # 4. Strip remaining HTML tags
-                resume_plain_text = re.sub(r'<[^>]+>', '', clean_html)
-                # 5. Clean up whitespace: collapse multiple blank lines, trim lines
-                lines = [line.strip() for line in resume_plain_text.splitlines()]
-                resume_plain_text = '\n'.join(lines)
-                resume_plain_text = re.sub(r'\n{3,}', '\n\n', resume_plain_text)
-                resume_plain_text = resume_plain_text.strip()
-
-                google_doc_id = google_docs_service.create_resume_doc(job_id, resume_plain_text, title_prefix=f"{title} - {company}")
-                if google_doc_id:
-                    google_docs_service.share_doc_with_anyone(google_doc_id)
-                    google_doc_url = google_docs_service.get_edit_url(google_doc_id)
-                    # Save googleDocId to jobs.json
-                    _update_job_field(job_id, 'googleDocId', google_doc_id)
-                    logger.info(f"Google Doc created for job {job_id}: {google_doc_url}")
-                else:
-                    logger.warning(f"Google Doc creation returned None for job {job_id}")
-            except Exception as e:
-                logger.error(f"Google Doc creation failed for job {job_id}: {e}")
-
-            # 6. Send Telegram Notification (enriched)
+            # 5. Send Telegram Notification (enriched, single consolidated message)
 
             telegram_lines = [
                 f"📝 <b>Gmail Draft Created</b>",
@@ -353,8 +323,8 @@ def generate_resume_pdf():
                 f"📎 <b>File:</b> {filename}",
                 f"🆔 <b>Draft ID:</b> {draft_metadata.get('gmailDraftId', 'N/A')}",
             ]
-            if google_doc_url:
-                telegram_lines.append(f"\n✏️ <b>Edit Resume:</b>\n{google_doc_url}")
+            if resume_edit_url:
+                telegram_lines.append(f"\n✏️ <b>Edit Resume:</b>\n{resume_edit_url}")
             if job_url:
                 telegram_lines.append(f"\n🔗 <b>Job URL:</b>\n{job_url}")
             telegram_lines.append(f"\n👤 <b>Hiring Manager:</b>\n{hm_name}")
@@ -368,19 +338,17 @@ def generate_resume_pdf():
 
             telegram_msg = '\n'.join(telegram_lines)
 
-            # Build inline keyboard with "Update Draft" button
-            reply_markup = None
-            if google_doc_url:
-                reply_markup = {
-                    "inline_keyboard": [
-                        [
-                            {
-                                "text": "🔄 Update Draft",
-                                "callback_data": f"update_resume:{job_id}"
-                            }
-                        ]
+            # Inline keyboard with Update Draft button
+            reply_markup = json.dumps({
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": "🔄 Update Draft",
+                            "callback_data": f"update_draft:{job_id}"
+                        }
                     ]
-                }
+                ]
+            })
 
             email_pipeline.send_telegram_notification(telegram_msg, pdf_path, reply_markup=reply_markup)
 
@@ -389,7 +357,6 @@ def generate_resume_pdf():
                 "draftCreated": True,
                 "filename": filename,
                 "downloadUrl": f"{config.BASE_URL}/downloads/{filename}",
-                "googleDocUrl": google_doc_url,
             }), 200
         else:
             # Draft failed — still send enriched details
@@ -420,7 +387,67 @@ def generate_resume_pdf():
             }), 200
 
     except Exception as e:
-        logger.error(f"❌ Error in /api/generate-resume-pdf: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/capture-resume-id', methods=['POST'])
+def capture_resume_id():
+    """
+    Receives a resume ID and edit URL (fetched by the extension directly
+    from the LandBetterJobs Supabase API). Persists resumeId and
+    resumeEditUrl into jobs.json for the matching job.
+    """
+    try:
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({"success": False, "error": "No JSON data provided"}), 400
+
+        resume_id = data.get('resume_id')
+        edit_url = data.get('edit_url')
+        job_id = data.get('job_id')
+
+        if not resume_id or not edit_url:
+            return jsonify({"success": False, "error": "Missing required fields: resume_id, edit_url"}), 400
+
+        # Persist into jobs.json if job_id is provided
+        if job_id:
+            _update_job_field(job_id, 'resumeId', resume_id)
+            _update_job_field(job_id, 'resumeEditUrl', edit_url)
+            logger.info(f"Stored resumeId={resume_id} for job {job_id}")
+
+        return jsonify({
+            "success": True,
+            "resume_id": resume_id,
+            "edit_url": edit_url
+        }), 200
+
+    except Exception as e:
+        logger.error(f"❌ Error in /api/capture-resume-id: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/job-by-resume/<resume_id>', methods=['GET'])
+def get_job_by_resume(resume_id):
+    """
+    Looks up a job in jobs.json by its stored resumeId.
+    Returns the job data if found.
+    """
+    try:
+        jobs = load_jobs_from_json()
+        for job in jobs:
+            if job.get('resumeId') == resume_id:
+                return jsonify({
+                    "success": True,
+                    "job": {
+                        "jobId": job.get('jobId'),
+                        "title": job.get('title'),
+                        "company": job.get('company'),
+                        "gmailDraftId": job.get('gmailDraftId'),
+                        "resumeId": job.get('resumeId'),
+                        "resumeEditUrl": job.get('resumeEditUrl'),
+                    }
+                }), 200
+        return jsonify({"success": False, "error": "No job found for this resume_id"}), 404
+    except Exception as e:
+        logger.error(f"Error looking up job by resume_id {resume_id}: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/test/reset-jobs', methods=['POST'])
@@ -465,13 +492,372 @@ def _update_job_field(job_id, field, value):
         return False
 
 
-def _do_resume_update(job_id):
+_update_draft_lock = {}
+
+@app.route('/api/update-draft', methods=['POST'])
+def update_draft():
     """
-    Core logic: exports Google Doc as PDF, replaces Gmail draft.
-    Returns (success: bool, result: dict).
-    Called by both the HTTP endpoint and the Telegram webhook.
+    Replaces an existing Gmail draft with an updated PDF.
+    Called by extension (either from Export PDF click or pending action flow).
+
+    Accepts either:
+      - { job_id, resume_html }  → backend generates PDF via WeasyPrint (preferred)
+      - { job_id, pdf_base64, pdf_filename? }  → pre-built PDF from extension
     """
-    # 1. Load job from jobs.json
+    data = None
+    try:
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({"success": False, "error": "No JSON data provided"}), 400
+
+        job_id = data.get('job_id')
+        resume_html = data.get('resume_html')
+        pdf_base64 = data.get('pdf_base64')
+
+        if not job_id:
+            return jsonify({"success": False, "error": "Missing required field: job_id"}), 400
+
+        if not resume_html and not pdf_base64:
+            return jsonify({"success": False, "error": "Missing resume_html or pdf_base64"}), 400
+
+        # Check if this is from the Telegram pending action flow (lock already held)
+        # or a direct Export PDF click (need to acquire lock)
+        from_pending = False
+        with _pending_actions_lock:
+            if job_id in _pending_actions:
+                from_pending = True
+
+        if not from_pending:
+            if _update_draft_lock.get(job_id):
+                return jsonify({"success": False, "error": "Update already in progress for this job"}), 409
+            _update_draft_lock[job_id] = True
+
+        try:
+            # 1. Load job from jobs.json
+            jobs = load_jobs_from_json()
+            job_data = None
+            for j in jobs:
+                if j.get('jobId') == job_id:
+                    job_data = j
+                    break
+
+            if not job_data:
+                return jsonify({"success": False, "error": f"Job {job_id} not found in jobs.json"}), 404
+
+            old_draft_id = job_data.get('gmailDraftId')
+            gmail_thread_id = job_data.get('gmailThreadId')
+            title = job_data.get('title', 'Resume')
+
+            if not old_draft_id:
+                logger.warning(f"No existing draft_id for job {job_id}. Will create a fresh draft.")
+
+            # 2. Generate or decode PDF
+            if resume_html:
+                # Generate PDF from HTML using WeasyPrint (same as /api/generate-resume-pdf)
+                pdf_filename = pdf_service.generate_pdf(resume_html, job_id, title)
+                if not pdf_filename:
+                    return jsonify({"success": False, "error": "Failed to generate PDF from HTML"}), 500
+                pdf_path = os.path.join(PDF_OUTPUT_DIR, pdf_filename)
+                logger.info(f"Generated updated PDF from HTML: {pdf_path}")
+            else:
+                # Decode pre-built PDF from base64
+                pdf_bytes = b64.b64decode(pdf_base64)
+                pdf_filename = data.get('pdf_filename', f"RecruitPulse_{job_id.replace(' ', '_')}_updated.pdf")
+                pdf_path = os.path.join(PDF_OUTPUT_DIR, pdf_filename)
+                with open(pdf_path, 'wb') as f:
+                    f.write(pdf_bytes)
+                logger.info(f"Saved updated PDF ({len(pdf_bytes)} bytes) to {pdf_path}")
+
+            # 3. Delete old Gmail draft
+            gmail_service = GmailService()
+            if old_draft_id:
+                delete_ok = gmail_service.delete_draft(old_draft_id)
+                if delete_ok:
+                    logger.info(f"Deleted old draft {old_draft_id}")
+                else:
+                    logger.warning(f"Could not delete old draft {old_draft_id}, proceeding anyway.")
+
+            # 4. Create new draft with same email content + updated PDF
+            to_email = job_data.get('applyEmail')
+            subject = job_data.get('emailSubject')
+            body = job_data.get('emailBody')
+
+            success = False
+            new_draft = None
+
+            if gmail_thread_id:
+                success, new_draft = gmail_service.create_draft_in_thread(
+                    to_email, subject, body, pdf_path, gmail_thread_id
+                )
+
+            if not success:
+                success, new_draft = gmail_service.create_draft(
+                    to_email, subject, body, pdf_path
+                )
+
+            if not success:
+                return jsonify({"success": False, "error": f"Failed to create new draft: {new_draft}"}), 500
+
+            # 5. Update jobs.json with new draft metadata
+            new_draft_id = new_draft.get('id')
+            new_thread_id = new_draft.get('message', {}).get('threadId')
+            _update_job_field(job_id, 'gmailDraftId', new_draft_id)
+            if new_thread_id:
+                _update_job_field(job_id, 'gmailThreadId', new_thread_id)
+
+            # 6. Build Telegram confirmation
+            company = job_data.get('company', 'Company')
+            title = job_data.get('title', 'Role')
+            resume_edit_url = job_data.get('resumeEditUrl', '')
+
+            telegram_lines = [
+                f"✅ <b>Draft Updated Successfully</b>",
+                f"",
+                f"🏢 <b>Company:</b> {company}",
+                f"💼 <b>Role:</b> {title}",
+                f"📧 <b>To:</b> {to_email}",
+                f"📎 <b>Updated Resume:</b> {pdf_filename}",
+                f"🆔 <b>New Draft ID:</b> {new_draft_id}",
+            ]
+            if resume_edit_url:
+                telegram_lines.append(f"\n✏️ <b>Edit Resume:</b>\n{resume_edit_url}")
+            telegram_lines.append(f"\nReview and send from your Gmail Drafts.")
+
+            telegram_msg = '\n'.join(telegram_lines)
+
+            # Include Update Draft button for subsequent updates
+            update_markup = json.dumps({
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": "🔄 Update Draft",
+                            "callback_data": f"update_draft:{job_id}"
+                        }
+                    ]
+                ]
+            })
+
+            # 7. Send Telegram confirmation
+            # If triggered via pending action, send directly to the chat_id
+            chat_id = None
+            with _pending_actions_lock:
+                action = _pending_actions.get(job_id)
+                if action:
+                    chat_id = action.get('chat_id')
+
+            if chat_id:
+                bot_token, _ = _get_telegram_credentials()
+                if bot_token:
+                    _send_telegram_direct(bot_token, chat_id, telegram_msg,
+                                          document_path=pdf_path, reply_markup=update_markup)
+            else:
+                email_pipeline.send_telegram_notification(
+                    telegram_msg, pdf_path, reply_markup=update_markup)
+
+            # 8. Clear pending action
+            _clear_pending_action(job_id)
+
+            return jsonify({
+                "success": True,
+                "newDraftId": new_draft_id,
+                "updatedPdf": pdf_filename,
+            }), 200
+
+        finally:
+            _update_draft_lock.pop(job_id, None)
+
+    except Exception as e:
+        logger.error(f"❌ Error in /api/update-draft: {e}")
+        job_id = data.get('job_id') if data else None
+        if job_id:
+            _update_draft_lock.pop(job_id, None)
+            _clear_pending_action(job_id)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ─── Telegram Webhook: Inline Button Callbacks ───────────────────────────────
+
+def _get_telegram_credentials():
+    """
+    Returns (bot_token, chat_ids) from dynamic config file or static config.
+    """
+    bot_token = config.TELEGRAM_BOT_TOKEN
+    chat_ids = config.TELEGRAM_CHAT_IDS
+
+    tg_config_path = os.path.join(BASE_DIR, 'telegram_config.json')
+    if os.path.exists(tg_config_path):
+        try:
+            with open(tg_config_path, 'r') as f:
+                fcntl.flock(f, fcntl.LOCK_SH)
+                try:
+                    data = json.load(f)
+                    if data.get("bot_token"):
+                        bot_token = data["bot_token"]
+                    if data.get("chat_ids"):
+                        chat_ids = data["chat_ids"]
+                finally:
+                    fcntl.flock(f, fcntl.LOCK_UN)
+        except Exception as e:
+            logger.error(f"Error loading telegram config: {e}")
+
+    return bot_token, chat_ids
+
+
+def _answer_callback_query(bot_token, callback_query_id, text="Processing..."):
+    """Acknowledge a Telegram inline button press."""
+    try:
+        http_requests.post(
+            f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery",
+            json={"callback_query_id": callback_query_id, "text": text},
+            timeout=5
+        )
+    except Exception as e:
+        logger.error(f"Failed to answer callback query: {e}")
+
+
+def _send_telegram_direct(bot_token, chat_id, message, document_path=None, reply_markup=None):
+    """
+    Send a Telegram message (and optional document) directly.
+    Used from webhook context where we already know the chat_id.
+    """
+    try:
+        msg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        http_requests.post(msg_url, json=payload, timeout=10).raise_for_status()
+
+        if document_path and os.path.exists(document_path):
+            doc_url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+            with open(document_path, 'rb') as doc:
+                files = {'document': doc}
+                doc_data = {"chat_id": chat_id, "caption": "📎 Updated Resume PDF", "parse_mode": "HTML"}
+                http_requests.post(doc_url, data=doc_data, files=files, timeout=20).raise_for_status()
+
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send Telegram message to {chat_id}: {e}")
+        return False
+
+
+# ─── Pending Actions Store (Extension-Assisted Draft Updates) ─────────────────
+# State machine: pending → processing → completed | failed
+
+_pending_actions = {}  # { job_id: { action, resumeEditUrl, status, chat_id, created_at } }
+_pending_actions_lock = threading.Lock()
+
+
+def _create_pending_action(job_id, resume_edit_url, chat_id=None):
+    """Store a pending action for the extension to pick up."""
+    with _pending_actions_lock:
+        if job_id in _pending_actions and _pending_actions[job_id].get('status') == 'processing':
+            return False  # Already being processed
+        _pending_actions[job_id] = {
+            'action': 'UPDATE_RESUME_PDF',
+            'job_id': job_id,
+            'resumeEditUrl': resume_edit_url,
+            'status': 'pending',
+            'chat_id': chat_id,
+            'created_at': datetime.utcnow().isoformat(),
+        }
+        logger.info(f"Created pending action for job {job_id}")
+        return True
+
+
+def _get_pending_action():
+    """Return the first pending action (FIFO) or None."""
+    with _pending_actions_lock:
+        for job_id, action in _pending_actions.items():
+            if action.get('status') == 'pending':
+                return action
+    return None
+
+
+def _update_pending_action_status(job_id, status):
+    """Update status of a pending action."""
+    with _pending_actions_lock:
+        if job_id in _pending_actions:
+            _pending_actions[job_id]['status'] = status
+            logger.info(f"Pending action {job_id} → {status}")
+
+
+def _clear_pending_action(job_id):
+    """Remove a completed/failed pending action."""
+    with _pending_actions_lock:
+        _pending_actions.pop(job_id, None)
+
+
+@app.route('/api/pending-actions', methods=['GET'])
+def get_pending_actions():
+    """
+    Returns the next pending action for the extension to process.
+    Marks it as 'processing' once fetched.
+    """
+    action = _get_pending_action()
+    if not action:
+        return jsonify({"success": True, "action": None}), 200
+
+    job_id = action['job_id']
+    _update_pending_action_status(job_id, 'processing')
+
+    return jsonify({
+        "success": True,
+        "action": {
+            "job_id": action['job_id'],
+            "action": action['action'],
+            "resumeEditUrl": action['resumeEditUrl'],
+        }
+    }), 200
+
+
+@app.route('/api/complete-action', methods=['POST'])
+def complete_action():
+    """
+    Called by the extension to report action completion or failure.
+    Expects JSON: { job_id, status: 'completed'|'failed', error? }
+    """
+    try:
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({"success": False, "error": "No JSON data"}), 400
+
+        job_id = data.get('job_id')
+        status = data.get('status', 'failed')
+        error = data.get('error')
+
+        if not job_id:
+            return jsonify({"success": False, "error": "Missing job_id"}), 400
+
+        with _pending_actions_lock:
+            action = _pending_actions.get(job_id)
+
+        if status == 'failed' and action:
+            # Notify Telegram about the failure
+            chat_id = action.get('chat_id')
+            if chat_id:
+                bot_token, _ = _get_telegram_credentials()
+                if bot_token:
+                    _send_telegram_direct(bot_token, chat_id,
+                        f"❌ <b>Draft update failed</b> for job <code>{job_id}</code>\n"
+                        f"Error: {error or 'Unknown error'}\n\n"
+                        f"Make sure the extension is running and you are logged in to LandBetterJobs.")
+
+        _clear_pending_action(job_id)
+        _update_draft_lock.pop(job_id, None)
+
+        return jsonify({"success": True, "status": status}), 200
+
+    except Exception as e:
+        logger.error(f"Error in /api/complete-action: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _handle_telegram_update_draft(job_id, bot_token, chat_id):
+    """
+    Triggered by Telegram inline button. Creates a pending action for the
+    extension to pick up. Does NOT process the draft directly.
+    """
+    # 1. Load job to get resumeEditUrl
     jobs = load_jobs_from_json()
     job_data = None
     for j in jobs:
@@ -480,206 +866,107 @@ def _do_resume_update(job_id):
             break
 
     if not job_data:
-        return False, {"error": f"Job {job_id} not found"}
+        _send_telegram_direct(bot_token, chat_id,
+            f"❌ Job <code>{job_id}</code> not found.")
+        return
 
-    google_doc_id = job_data.get('googleDocId')
-    gmail_draft_id = job_data.get('gmailDraftId')
-    gmail_thread_id = job_data.get('gmailThreadId')
+    resume_edit_url = job_data.get('resumeEditUrl')
+    if not resume_edit_url:
+        _send_telegram_direct(bot_token, chat_id,
+            f"❌ No resume edit URL stored for job <code>{job_id}</code>.")
+        return
 
-    if not google_doc_id:
-        return False, {"error": "No Google Doc found for this job. Resume must be generated first."}
-
-    if not gmail_draft_id or not gmail_thread_id:
-        return False, {"error": "No Gmail draft metadata found for this job."}
-
-    # 2. Check if email was already sent
-    gmail_service = GmailService()
-    if gmail_service.was_email_sent(gmail_thread_id):
-        return False, {"error": "Email has already been sent. Cannot update a sent email."}
-
-    # 3. Export Google Doc as PDF
-    updated_pdf_filename = f"RecruitPulse_{job_id.replace(' ', '_')}_updated.pdf"
-    updated_pdf_path = os.path.join(PDF_OUTPUT_DIR, updated_pdf_filename)
-
-    export_success = google_docs_service.export_doc_as_pdf(google_doc_id, updated_pdf_path)
-    if not export_success:
-        return False, {"error": "Failed to export Google Doc as PDF"}
-
-    # 4. Delete old Gmail draft
-    delete_success = gmail_service.delete_draft(gmail_draft_id)
-    if not delete_success:
-        logger.warning(f"Could not delete old draft {gmail_draft_id}, proceeding anyway.")
-
-    # 5. Create new draft (try same thread first, fall back to new thread)
-    to_email = job_data.get('applyEmail')
-    subject = job_data.get('emailSubject')
-    body = job_data.get('emailBody')
-
-    success, new_draft = gmail_service.create_draft_in_thread(
-        to_email, subject, body, updated_pdf_path, gmail_thread_id
-    )
-    if not success:
-        logger.warning(f"Could not create draft in thread {gmail_thread_id}, creating fresh draft instead.")
-        success, new_draft = gmail_service.create_draft(
-            to_email, subject, body, updated_pdf_path
-        )
-
-    if not success:
-        return False, {"error": f"Failed to create new draft: {new_draft}"}
-
-    # 6. Update jobs.json with new draft ID and thread ID
-    new_draft_id = new_draft.get('id')
-    new_thread_id = new_draft.get('message', {}).get('threadId')
-    _update_job_field(job_id, 'gmailDraftId', new_draft_id)
-    if new_thread_id:
-        _update_job_field(job_id, 'gmailThreadId', new_thread_id)
-
-    # 7. Send Telegram confirmation with updated PDF attached
     company = job_data.get('company', 'Company')
     title = job_data.get('title', 'Role')
-    doc_url = google_docs_service.get_edit_url(google_doc_id)
 
-    confirm_lines = [
-        f"🔄 <b>Resume Draft Updated</b>",
-        f"",
-        f"🏢 <b>Company:</b> {company}",
-        f"💼 <b>Role:</b> {title}",
-        f"📧 <b>To:</b> {to_email}",
-        f"📎 <b>Updated PDF:</b> {updated_pdf_filename}",
-        f"🆔 <b>New Draft ID:</b> {new_draft_id}",
-        f"\n✏️ <b>Google Doc:</b>\n{doc_url}",
-        f"\n✅ Old draft deleted and replaced with updated resume.",
-    ]
-    confirm_msg = '\n'.join(confirm_lines)
-    email_pipeline.send_telegram_notification(confirm_msg, updated_pdf_path)
+    # 2. Check for duplicate
+    if _update_draft_lock.get(job_id):
+        _send_telegram_direct(bot_token, chat_id,
+            f"⏳ Update already in progress for:\n🏢 {company} — 💼 {title}")
+        return
+    _update_draft_lock[job_id] = True
 
-    return True, {
-        "message": "Resume draft updated successfully",
-        "newDraftId": new_draft_id,
-        "updatedPdf": updated_pdf_filename,
-    }
+    # 3. Create pending action for extension
+    created = _create_pending_action(job_id, resume_edit_url, chat_id)
+    if not created:
+        _update_draft_lock.pop(job_id, None)
+        _send_telegram_direct(bot_token, chat_id,
+            f"⏳ Update already in progress for:\n🏢 {company} — 💼 {title}")
+        return
 
+    # 4. Notify user
+    _send_telegram_direct(bot_token, chat_id,
+        f"🔄 <b>Update Draft requested</b>\n"
+        f"🏢 {company} — 💼 {title}\n\n"
+        f"⏳ Waiting for extension to download updated PDF…\n"
+        f"Make sure the extension is running.")
 
-@app.route('/api/update-resume/<job_id>', methods=['POST'])
-def update_resume(job_id):
-    """
-    HTTP endpoint: exports Google Doc as PDF, replaces Gmail draft.
-    """
-    try:
-        success, result = _do_resume_update(job_id)
-        if success:
-            return jsonify({"success": True, **result}), 200
-        else:
-            return jsonify({"success": False, **result}), 400
-    except Exception as e:
-        logger.error(f"❌ Error in /api/update-resume/{job_id}: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+    logger.info(f"Pending action created for job {job_id}, waiting for extension.")
+
+    # 5. Start a timeout thread — if extension doesn't respond in 120s, fail
+    def _timeout_check():
+        time.sleep(120)
+        with _pending_actions_lock:
+            action = _pending_actions.get(job_id)
+            if action and action.get('status') in ('pending', 'processing'):
+                _pending_actions.pop(job_id, None)
+                _update_draft_lock.pop(job_id, None)
+                _send_telegram_direct(bot_token, chat_id,
+                    f"⏰ <b>Timeout:</b> Extension did not respond in 2 minutes.\n"
+                    f"🏢 {company} — 💼 {title}\n\n"
+                    f"Make sure the extension is running and try again.")
+                logger.warning(f"Pending action timeout for job {job_id}")
+
+    threading.Thread(target=_timeout_check, daemon=True).start()
 
 
 @app.route('/telegram/webhook', methods=['POST'])
 def telegram_webhook():
     """
-    Receives Telegram callback queries from inline buttons.
-    Handles 'update_resume:<jobId>' callback data.
-    Improved UX: popup ack → status msg → process → edit status → remove button.
+    Receives updates from Telegram Bot API (webhook mode).
+    Handles inline keyboard callback queries (e.g. Update Draft button).
     """
     try:
-        update = request.get_json(silent=True)
-        if not update:
-            return 'OK', 200
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({"ok": True}), 200
 
-        callback_query = update.get('callback_query')
-        if not callback_query:
-            return 'OK', 200
+        bot_token, _ = _get_telegram_credentials()
 
-        callback_id = callback_query.get('id')
-        callback_data = callback_query.get('data', '')
-        chat_id = callback_query.get('message', {}).get('chat', {}).get('id')
-        original_message_id = callback_query.get('message', {}).get('message_id')
+        if "callback_query" in data:
+            callback = data["callback_query"]
+            callback_query_id = callback.get("id")
+            callback_data = callback.get("data", "")
+            chat_id = callback.get("message", {}).get("chat", {}).get("id")
 
-        bot_token = config.TELEGRAM_BOT_TOKEN
-        api_base = f"https://api.telegram.org/bot{bot_token}"
+            _answer_callback_query(bot_token, callback_query_id,
+                                   text="⏳ Requesting extension to update draft...")
 
-        # 1. Acknowledge callback with popup toast
-        http_requests.post(
-            f"{api_base}/answerCallbackQuery",
-            json={
-                "callback_query_id": callback_id,
-                "text": "⏳ Updating draft... please wait",
-                "show_alert": False,
-            }
-        )
+            if callback_data.startswith("update_draft:"):
+                job_id = callback_data.split(":", 1)[1]
+                logger.info(f"Telegram callback: update_draft for job {job_id}")
 
-        if callback_data.startswith('update_resume:'):
-            job_id = callback_data.split(':', 1)[1]
-            logger.info(f"Telegram callback: update_resume for job {job_id}")
-
-            # 2. Send a temporary status message
-            status_resp = http_requests.post(
-                f"{api_base}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": "⏳ <b>Updating resume draft...</b>\n\nExporting Google Doc → PDF → Replacing Gmail draft...",
-                    "parse_mode": "HTML",
-                }
-            ).json()
-            status_msg_id = status_resp.get('result', {}).get('message_id')
-
-            # 3. Remove the inline button from original message (prevent duplicate clicks)
-            original_text = callback_query.get('message', {}).get('text', '')
-            http_requests.post(
-                f"{api_base}/editMessageReplyMarkup",
-                json={
-                    "chat_id": chat_id,
-                    "message_id": original_message_id,
-                    "reply_markup": {"inline_keyboard": []},
-                }
-            )
-
-            # 4. Process the resume update
-            success, result = _do_resume_update(job_id)
-
-            # 5. Edit the status message with the result
-            if success:
-                final_msg = (
-                    f"✅ <b>Resume Draft Updated Successfully!</b>\n\n"
-                    f"📎 New PDF: {result.get('updatedPdf', 'N/A')}\n"
-                    f"🆔 New Draft ID: {result.get('newDraftId', 'N/A')}\n\n"
-                    f"Review and send from your Gmail Drafts."
-                )
+                if chat_id:
+                    threading.Thread(
+                        target=_handle_telegram_update_draft,
+                        args=(job_id, bot_token, chat_id),
+                        daemon=True
+                    ).start()
             else:
-                error_text = result.get('error', 'Unknown error')
-                final_msg = f"❌ <b>Update Failed</b>\n\n{error_text}"
+                logger.warning(f"Unknown callback_data: {callback_data}")
 
-            if status_msg_id:
-                http_requests.post(
-                    f"{api_base}/editMessageText",
-                    json={
-                        "chat_id": chat_id,
-                        "message_id": status_msg_id,
-                        "text": final_msg,
-                        "parse_mode": "HTML",
-                    }
-                )
-            else:
-                # Fallback: send as new message if edit fails
-                http_requests.post(
-                    f"{api_base}/sendMessage",
-                    json={"chat_id": chat_id, "text": final_msg, "parse_mode": "HTML"}
-                )
-
-        return 'OK', 200
+        return jsonify({"ok": True}), 200
 
     except Exception as e:
         logger.error(f"❌ Error in /telegram/webhook: {e}")
-        return 'OK', 200  # Always return 200 to Telegram
+        return jsonify({"ok": True}), 200
 
 
 @app.route('/api/send-pending-emails', methods=['POST'])
 def send_pending_emails():
     """DEPRECATED: Use /api/generate-resume-pdf for integrated PDF + Email flow."""
     return jsonify({
-        "success": False, 
+        "success": False,
         "message": "This endpoint is deprecated. Use /api/generate-resume-pdf for integrated flow."
     }), 410
 
@@ -694,8 +981,90 @@ def download_file(filename):
         print(f"❌ Error serving file {filename}: {e}")
         return jsonify({"success": False, "error": "File not found"}), 404
 
+# ─── Telegram Long-Polling (no ngrok required) ───────────────────────────────
+
+_telegram_polling_active = False
+
+def _start_telegram_polling():
+    """
+    Starts a background thread that long-polls Telegram for updates.
+    Routes callback_query to pending action creation (extension-assisted).
+    """
+    global _telegram_polling_active
+
+    bot_token, _ = _get_telegram_credentials()
+    if not bot_token:
+        logger.warning("No Telegram bot token configured. Polling not started.")
+        return
+
+    _telegram_polling_active = True
+    offset = None
+
+    logger.info("🤖 Telegram polling started.")
+
+    while _telegram_polling_active:
+        try:
+            bot_token, _ = _get_telegram_credentials()
+            if not bot_token:
+                time.sleep(10)
+                continue
+
+            url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+            params = {"timeout": 30, "allowed_updates": ["callback_query"]}
+            if offset:
+                params["offset"] = offset
+
+            resp = http_requests.get(url, params=params, timeout=35)
+            data = resp.json()
+
+            if not data.get("ok"):
+                logger.error(f"Telegram getUpdates error: {data}")
+                time.sleep(5)
+                continue
+
+            for update in data.get("result", []):
+                offset = update["update_id"] + 1
+
+                if "callback_query" in update:
+                    callback = update["callback_query"]
+                    callback_query_id = callback.get("id")
+                    callback_data = callback.get("data", "")
+                    chat_id = callback.get("message", {}).get("chat", {}).get("id")
+
+                    _answer_callback_query(bot_token, callback_query_id,
+                                           text="⏳ Requesting extension to update draft...")
+
+                    if callback_data.startswith("update_draft:"):
+                        job_id = callback_data.split(":", 1)[1]
+                        logger.info(f"Telegram poll: update_draft for job {job_id}")
+
+                        if chat_id:
+                            threading.Thread(
+                                target=_handle_telegram_update_draft,
+                                args=(job_id, bot_token, chat_id),
+                                daemon=True
+                            ).start()
+                    else:
+                        logger.warning(f"Unknown callback_data from polling: {callback_data}")
+
+        except http_requests.exceptions.Timeout:
+            continue
+        except Exception as e:
+            logger.error(f"Telegram polling error: {e}")
+            time.sleep(5)
+
+
 if __name__ == '__main__':
     port = PORT
     print(f"🚀 Server running on {config.BASE_URL}")
     print(f"📂 Data will be saved to: {JSON_FILE_PATH}")
+
+    # Start Telegram polling in background (only in main process, not reloader)
+    if not os.environ.get('WERKZEUG_RUN_MAIN'):
+        pass  # Skip in reloader parent process
+    else:
+        poller = threading.Thread(target=_start_telegram_polling, daemon=True)
+        poller.start()
+        print("🤖 Telegram inline button polling active.")
+
     app.run(host='0.0.0.0', port=port, debug=True)

@@ -45,6 +45,7 @@ export const MSG = Object.freeze({
 
   // Resume Builder → Background
   RESUME_BUILT: 'RESUME_BUILT',
+  EXTRACT_RESUME_HTML: 'EXTRACT_RESUME_HTML',
 
   // External tab → Background
   EXTERNAL_DATA: 'EXTERNAL_DATA',

@@ -974,6 +974,114 @@ chrome.downloads.onChanged.addListener((delta) => {
     }
 });
 
-// Helper used by resumeBuilder.js via message if needed, 
-// though here we'll just expose it to the internal logic if we were calling it from here.
-// But the user asked for modularity.
+// ─── Pending Actions Polling (Telegram → Extension Draft Update) ─────────────
+// Reuses existing resume HTML extraction approach:
+//   1. Open resume page in background tab
+//   2. Content script extracts HTML from div#resume-preview
+//   3. Send HTML to backend → WeasyPrint generates PDF → updates Gmail draft
+
+let _pendingActionInProgress = false;
+const PENDING_ACTION_POLL_INTERVAL_MS = 7000;
+
+async function pollPendingActions() {
+    if (_pendingActionInProgress) return;
+
+    try {
+        const resp = await fetch(`${API_BASE_URL}/api/pending-actions`);
+        const data = await resp.json();
+
+        if (!data.success || !data.action) return;
+
+        const action = data.action;
+        log('INFO', `[PendingAction] Received: ${action.action} for job ${action.job_id}`);
+
+        _pendingActionInProgress = true;
+        await handlePendingAction(action);
+    } catch (err) {
+        if (!err.message.includes('Failed to fetch')) {
+            log('WARN', `[PendingAction] Poll error: ${err.message}`);
+        }
+    } finally {
+        _pendingActionInProgress = false;
+    }
+}
+
+async function handlePendingAction(action) {
+    const { job_id, resumeEditUrl } = action;
+    let tab = null;
+
+    try {
+        log('INFO', `[PendingAction] Opening resume page: ${resumeEditUrl}`);
+
+        // 1. Open the resume page in a background tab
+        tab = await chrome.tabs.create({ url: resumeEditUrl, active: false });
+        await waitForTabComplete(tab.id);
+
+        // 2. Wait for SPA rendering + content script initialization
+        await sleep(5000);
+
+        // 3. Ask content script to extract resume HTML from div#resume-preview
+        log('INFO', `[PendingAction] Extracting resume HTML from tab ${tab.id}`);
+        let resumeHtml = null;
+
+        try {
+            const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_RESUME_HTML' });
+            if (response && response.html) {
+                resumeHtml = response.html;
+                log('INFO', `[PendingAction] Got resume HTML (${resumeHtml.length} chars)`);
+            } else {
+                throw new Error(response?.error || 'No HTML returned from content script');
+            }
+        } catch (err) {
+            throw new Error(`Failed to extract resume HTML: ${err.message}. Content script may not be loaded.`);
+        }
+
+        // 4. Send HTML to backend for PDF generation + draft update
+        log('INFO', `[PendingAction] Sending HTML to /api/update-draft for job ${job_id}`);
+        const updateResp = await fetch(`${API_BASE_URL}/api/update-draft`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                job_id: job_id,
+                resume_html: resumeHtml,
+            })
+        });
+
+        const result = await updateResp.json();
+        if (result.success) {
+            log('INFO', `[PendingAction] Draft updated! New Draft ID: ${result.newDraftId}`);
+        } else {
+            throw new Error(`Backend error: ${result.error}`);
+        }
+
+    } catch (err) {
+        log('ERROR', `[PendingAction] Failed: ${err.message}`);
+
+        // Notify backend of failure
+        try {
+            await fetch(`${API_BASE_URL}/api/complete-action`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    job_id: job_id,
+                    status: 'failed',
+                    error: err.message,
+                })
+            });
+        } catch (e) {
+            log('ERROR', `[PendingAction] Failed to report error to backend: ${e.message}`);
+        }
+    } finally {
+        // 5. Close the tab
+        if (tab) {
+            try {
+                await chrome.tabs.remove(tab.id);
+                log('INFO', `[PendingAction] Tab closed.`);
+            } catch (_) {}
+        }
+    }
+}
+
+// Start polling for pending actions
+setInterval(pollPendingActions, PENDING_ACTION_POLL_INTERVAL_MS);
+log('INFO', `[PendingAction] Polling started (every ${PENDING_ACTION_POLL_INTERVAL_MS / 1000}s)`);
