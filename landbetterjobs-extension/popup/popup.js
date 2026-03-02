@@ -139,12 +139,16 @@ btnSaveAutomation.addEventListener('click', () => {
         chrome.runtime.sendMessage({ type: 'UPDATE_AUTOMATION' }, () => {
             if (chrome.runtime.lastError) {
                 console.error("Failed to update automation:", chrome.runtime.lastError);
+            } else {
+                alert('Automation saved successfully!');
             }
         });
     });
 });
 
 btnDisableAutomation.addEventListener('click', () => {
+    if (!confirm('Are you sure you want to disable automation?')) return;
+
     chrome.storage.local.set({ automationEnabled: false }, () => {
         btnDisableAutomation.disabled = true;
         setRunningState(false);
