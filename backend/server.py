@@ -394,7 +394,7 @@ def generate_resume_pdf():
         else:
             # Draft failed — still send enriched details
             fail_lines = [
-                f"❌ <b>Gmail Draft Failed</b>",
+                f"❌ <b>No email provided in linkedin post</b>",
                 f"",
                 f"🏢 <b>Company:</b> {company}",
                 f"💼 <b>Role:</b> {title}",
@@ -410,7 +410,7 @@ def generate_resume_pdf():
                 fail_lines.append(f"\n📩 <b>Initial Message:</b>\n{initial_msg}")
             if followup_msg:
                 fail_lines.append(f"\n🔁 <b>Follow-up 1:</b>\n{followup_msg}")
-            fail_lines.append(f"\n⚠️ PDF was generated but draft creation failed.")
+            fail_lines.append(f"\n⚠️ PDF was generated but no draft was created.")
             email_pipeline.send_telegram_notification('\n'.join(fail_lines), pdf_path)
             return jsonify({
                 "success": True, 
