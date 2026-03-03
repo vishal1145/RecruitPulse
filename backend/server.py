@@ -928,11 +928,20 @@ def _handle_telegram_update_draft(job_id, bot_token, chat_id):
     company = job_data.get('company', 'Company')
     title = job_data.get('title', 'Role')
 
-    # 2. Check for duplicate
-    if _update_draft_lock.get(job_id):
-        _send_telegram_direct(bot_token, chat_id,
-            f"⏳ Update already in progress for:\n🏢 {company} — 💼 {title}")
-        return
+    # 2. Check for duplicate using file-based store (VM-safe)
+    actions = _load_pending_actions()
+    existing = actions.get(job_id)
+    if existing and existing.get('status') in ('pending', 'processing'):
+        # Auto-clear if expired (>300s)
+        if time.time() - existing.get('created_at', 0) > 300:
+            del actions[job_id]
+            _save_pending_actions(actions)
+            _update_draft_lock.pop(job_id, None)
+            logger.info(f"Cleared expired pending action for job {job_id}, allowing retry.")
+        else:
+            _send_telegram_direct(bot_token, chat_id,
+                f"⏳ Update already in progress for:\n🏢 {company} — 💼 {title}")
+            return
     _update_draft_lock[job_id] = True
 
     # 3. Create pending action for extension

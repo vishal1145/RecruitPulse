@@ -151,6 +151,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         log('INFO', '⏰ Automation alarm triggered. Running agent...');
         runAgent();
     }
+    if (alarm.name === 'pendingActionPoll') {
+        log('INFO', '🔍 Pending action poll alarm triggered.');
+        pollPendingActions();
+    }
 });
 
 async function handleUpdateAutomation() {
@@ -1082,6 +1086,9 @@ async function handlePendingAction(action) {
     }
 }
 
-// Start polling for pending actions
-setInterval(pollPendingActions, PENDING_ACTION_POLL_INTERVAL_MS);
-log('INFO', `[PendingAction] Polling started (every ${PENDING_ACTION_POLL_INTERVAL_MS / 1000}s)`);
+// Start polling for pending actions using chrome.alarms (survives service worker restarts)
+chrome.alarms.create('pendingActionPoll', { periodInMinutes: 2 });
+log('INFO', '[PendingAction] Alarm-based polling started (every 2 minutes)');
+
+// Also poll immediately on service worker startup
+pollPendingActions();
