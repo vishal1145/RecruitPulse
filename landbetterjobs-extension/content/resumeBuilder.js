@@ -146,7 +146,7 @@ async function handleBuildResume(job) {
 
         await sleep(1000 + Math.random() * 500);
 
-        // 3. Select Last Resume
+        // 3. Select "DefaultResume" by name
         log('INFO', 'Opening resume dropdown...');
         simulateRealClick(combobox);
         await sleep(1500);
@@ -155,10 +155,18 @@ async function handleBuildResume(job) {
         if (!firstOption) throw new Error('No resumes found in dropdown');
 
         const options = document.querySelectorAll(RESUME_BUILDER_SELECTORS.DROPDOWN_OPTIONS);
-        const lastOption = options[options.length - 1];
+        const TARGET_RESUME_NAME = 'DefaultResume';
+        let targetOption = Array.from(options).find(opt =>
+            opt.textContent.trim().toLowerCase().includes(TARGET_RESUME_NAME.toLowerCase())
+        );
 
-        log('INFO', 'Selecting last resume...');
-        simulateRealClick(lastOption);
+        if (!targetOption) {
+            log('WARN', `"${TARGET_RESUME_NAME}" not found in dropdown. Falling back to last resume.`);
+            targetOption = options[options.length - 1];
+        }
+
+        log('INFO', `Selecting resume: "${targetOption.textContent.trim()}"`);
+        simulateRealClick(targetOption);
         await sleep(2000); // Give time for content to load
 
         // 4. Fill Job Details
