@@ -523,9 +523,9 @@ def update_draft():
         # Check if this is from the Telegram pending action flow (lock already held)
         # or a direct Export PDF click (need to acquire lock)
         from_pending = False
-        with _pending_actions_lock:
-            if job_id in _pending_actions:
-                from_pending = True
+        pending_actions = _load_pending_actions()
+        if job_id in pending_actions:
+            from_pending = True
 
         if not from_pending:
             if _update_draft_lock.get(job_id):
@@ -640,10 +640,10 @@ def update_draft():
             # 7. Send Telegram confirmation
             # If triggered via pending action, send directly to the chat_id
             chat_id = None
-            with _pending_actions_lock:
-                action = _pending_actions.get(job_id)
-                if action:
-                    chat_id = action.get('chat_id')
+            pending_actions = _load_pending_actions()
+            action = pending_actions.get(job_id)
+            if action:
+                chat_id = action.get('chat_id')
 
             if chat_id:
                 bot_token, _ = _get_telegram_credentials()
@@ -740,51 +740,85 @@ def _send_telegram_direct(bot_token, chat_id, message, document_path=None, reply
         return False
 
 
-# ─── Pending Actions Store (Extension-Assisted Draft Updates) ─────────────────
-# State machine: pending → processing → completed | failed
+# ─── Pending Actions Store (File-Based, VM-Safe) ─────────────────────────────
+# State machine: pending → processing → completed | expired | failed
+# Stored in pending_actions.json for restart/VM separation safety.
 
-_pending_actions = {}  # { job_id: { action, resumeEditUrl, status, chat_id, created_at } }
-_pending_actions_lock = threading.Lock()
+PENDING_ACTIONS_FILE = os.path.join(BASE_DIR, 'pending_actions.json')
+
+
+def _load_pending_actions():
+    """Load pending actions from JSON file."""
+    if not os.path.exists(PENDING_ACTIONS_FILE):
+        return {}
+    try:
+        with open(PENDING_ACTIONS_FILE, 'r') as f:
+            fcntl.flock(f, fcntl.LOCK_SH)
+            try:
+                data = json.load(f)
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, IOError) as e:
+        logger.error(f"Error loading pending_actions.json: {e}")
+        return {}
+
+
+def _save_pending_actions(actions):
+    """Save pending actions to JSON file."""
+    try:
+        with open(PENDING_ACTIONS_FILE, 'w') as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                json.dump(actions, f, indent=2)
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+    except IOError as e:
+        logger.error(f"Error saving pending_actions.json: {e}")
 
 
 def _create_pending_action(job_id, resume_edit_url, chat_id=None):
-    """Store a pending action for the extension to pick up."""
-    with _pending_actions_lock:
-        if job_id in _pending_actions and _pending_actions[job_id].get('status') == 'processing':
-            return False  # Already being processed
-        _pending_actions[job_id] = {
-            'action': 'UPDATE_RESUME_PDF',
-            'job_id': job_id,
-            'resumeEditUrl': resume_edit_url,
-            'status': 'pending',
-            'chat_id': chat_id,
-            'created_at': datetime.utcnow().isoformat(),
-        }
-        logger.info(f"Created pending action for job {job_id}")
-        return True
+    """Store a pending action for the extension to pick up (file-based)."""
+    actions = _load_pending_actions()
+    if job_id in actions and actions[job_id].get('status') == 'processing':
+        return False  # Already being processed
+    actions[job_id] = {
+        'action': 'UPDATE_RESUME_PDF',
+        'job_id': job_id,
+        'resumeEditUrl': resume_edit_url,
+        'status': 'pending',
+        'chat_id': chat_id,
+        'created_at': time.time(),
+    }
+    _save_pending_actions(actions)
+    logger.info(f"Created pending action for job {job_id}")
+    return True
 
 
 def _get_pending_action():
     """Return the first pending action (FIFO) or None."""
-    with _pending_actions_lock:
-        for job_id, action in _pending_actions.items():
-            if action.get('status') == 'pending':
-                return action
+    actions = _load_pending_actions()
+    for job_id, action in actions.items():
+        if action.get('status') == 'pending':
+            return action
     return None
 
 
 def _update_pending_action_status(job_id, status):
-    """Update status of a pending action."""
-    with _pending_actions_lock:
-        if job_id in _pending_actions:
-            _pending_actions[job_id]['status'] = status
-            logger.info(f"Pending action {job_id} → {status}")
+    """Update status of a pending action (file-based)."""
+    actions = _load_pending_actions()
+    if job_id in actions:
+        actions[job_id]['status'] = status
+        _save_pending_actions(actions)
+        logger.info(f"Pending action {job_id} → {status}")
 
 
 def _clear_pending_action(job_id):
-    """Remove a completed/failed pending action."""
-    with _pending_actions_lock:
-        _pending_actions.pop(job_id, None)
+    """Remove a completed/failed pending action (file-based)."""
+    actions = _load_pending_actions()
+    if job_id in actions:
+        del actions[job_id]
+        _save_pending_actions(actions)
 
 
 @app.route('/api/pending-actions', methods=['GET'])
@@ -792,22 +826,37 @@ def get_pending_actions():
     """
     Returns the next pending action for the extension to process.
     Marks it as 'processing' once fetched.
+    Expires actions older than 300 seconds.
     """
-    action = _get_pending_action()
-    if not action:
-        return jsonify({"success": True, "action": None}), 200
+    actions = _load_pending_actions()
+    changed = False
 
-    job_id = action['job_id']
-    _update_pending_action_status(job_id, 'processing')
+    # Expire stale actions (> 300 seconds old)
+    for job_id, action in list(actions.items()):
+        created_at = action.get('created_at', 0)
+        if action.get('status') in ('pending', 'processing') and time.time() - created_at > 300:
+            action['status'] = 'expired'
+            changed = True
+            logger.warning(f"Pending action expired for job {job_id}")
 
-    return jsonify({
-        "success": True,
-        "action": {
-            "job_id": action['job_id'],
-            "action": action['action'],
-            "resumeEditUrl": action['resumeEditUrl'],
-        }
-    }), 200
+    if changed:
+        _save_pending_actions(actions)
+
+    # Find first pending action
+    for job_id, action in actions.items():
+        if action.get('status') == 'pending':
+            action['status'] = 'processing'
+            _save_pending_actions(actions)
+            return jsonify({
+                "success": True,
+                "action": {
+                    "job_id": action['job_id'],
+                    "action": action['action'],
+                    "resumeEditUrl": action['resumeEditUrl'],
+                }
+            }), 200
+
+    return jsonify({"success": True, "action": None}), 200
 
 
 @app.route('/api/complete-action', methods=['POST'])
@@ -828,8 +877,8 @@ def complete_action():
         if not job_id:
             return jsonify({"success": False, "error": "Missing job_id"}), 400
 
-        with _pending_actions_lock:
-            action = _pending_actions.get(job_id)
+        pending_actions = _load_pending_actions()
+        action = pending_actions.get(job_id)
 
         if status == 'failed' and action:
             # Notify Telegram about the failure
@@ -898,26 +947,12 @@ def _handle_telegram_update_draft(job_id, bot_token, chat_id):
     _send_telegram_direct(bot_token, chat_id,
         f"🔄 <b>Update Draft requested</b>\n"
         f"🏢 {company} — 💼 {title}\n\n"
-        f"⏳ Waiting for extension to download updated PDF…\n"
+        f"⏳ Waiting for extension to download updated resume…\n"
         f"Make sure the extension is running.")
 
     logger.info(f"Pending action created for job {job_id}, waiting for extension.")
-
-    # 5. Start a timeout thread — if extension doesn't respond in 120s, fail
-    def _timeout_check():
-        time.sleep(120)
-        with _pending_actions_lock:
-            action = _pending_actions.get(job_id)
-            if action and action.get('status') in ('pending', 'processing'):
-                _pending_actions.pop(job_id, None)
-                _update_draft_lock.pop(job_id, None)
-                _send_telegram_direct(bot_token, chat_id,
-                    f"⏰ <b>Timeout:</b> Extension did not respond in 2 minutes.\n"
-                    f"🏢 {company} — 💼 {title}\n\n"
-                    f"Make sure the extension is running and try again.")
-                logger.warning(f"Pending action timeout for job {job_id}")
-
-    threading.Thread(target=_timeout_check, daemon=True).start()
+    # No threading timeout — extension drives lifecycle.
+    # Expiry is handled by /api/pending-actions (300s TTL).
 
 
 @app.route('/telegram/webhook', methods=['POST'])

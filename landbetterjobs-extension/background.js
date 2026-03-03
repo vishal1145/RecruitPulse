@@ -981,7 +981,7 @@ chrome.downloads.onChanged.addListener((delta) => {
 //   3. Send HTML to backend → WeasyPrint generates PDF → updates Gmail draft
 
 let _pendingActionInProgress = false;
-const PENDING_ACTION_POLL_INTERVAL_MS = 7000;
+const PENDING_ACTION_POLL_INTERVAL_MS = 120000; // 2 minutes
 
 async function pollPendingActions() {
     if (_pendingActionInProgress) return;
@@ -1077,7 +1077,7 @@ async function handlePendingAction(action) {
             try {
                 await chrome.tabs.remove(tab.id);
                 log('INFO', `[PendingAction] Tab closed.`);
-            } catch (_) {}
+            } catch (_) { }
         }
     }
 }
