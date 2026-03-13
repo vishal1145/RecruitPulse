@@ -202,45 +202,44 @@ async function runAgent() {
     // Persist running state
     await chrome.storage.local.set({ [STORAGE.QUEUE_ACTIVE]: true });
 
-    // Find the dashboard tab
+    // Find or navigate to the job-search-ai-agent tab
     try {
-        const tabs = await chrome.tabs.query({ url: 'https://landbetterjobs.com/dashboard*' });
+        let tabs = await chrome.tabs.query({ url: 'https://landbetterjobs.com/job-search-ai-agent*' });
+
         if (tabs.length === 0) {
-            broadcastStatus('❌ ERROR: No LandBetterJobs dashboard tab found. Please open the dashboard first.', 'error');
-            finishQueue();
-            return;
+            // No job-search-ai-agent tab open — open one
+            broadcastStatus('🔀 Opening /job-search-ai-agent in a new tab…', 'info');
+            log('INFO', 'No job-search-ai-agent tab found. Opening new tab.');
+
+            const newTab = await chrome.tabs.create({ url: 'https://landbetterjobs.com/job-search-ai-agent', active: true });
+            await waitForTabComplete(newTab.id);
+            await sleep(2000); // Give React time to mount
+
+            dashboardTabId = newTab.id;
+        } else {
+            dashboardTabId = tabs[0].id;
         }
-        dashboardTabId = tabs[0].id;
-        log('INFO', `Dashboard tab: ${dashboardTabId}`);
+
+        log('INFO', `job-search-ai-agent tab: ${dashboardTabId}`);
     } catch (err) {
-        log('ERROR', 'Failed to find dashboard tab', err);
+        log('ERROR', 'Failed to find/navigate to job-search-ai-agent tab', err);
         finishQueue();
         return;
     }
 
-    // Ask the dashboard content script to collect all jobs
-    broadcastStatus('🔍 Collecting jobs from dashboard…', 'info');
+    // Ask the dashboard content script to ensure "New" filter is selected
+    broadcastStatus('🔍 Ensuring "New" filter is selected on dashboard…', 'info');
     try {
         await requestJobCollection();
     } catch (err) {
-        broadcastStatus(`❌ Failed to collect jobs: ${err.message}`, 'error');
+        broadcastStatus(`❌ Failed to prepare dashboard: ${err.message}`, 'error');
         finishQueue();
         return;
     }
 
-    // Small pause to let the JOBS_COLLECTED message arrive and populate queue[]
-    await sleep(800);
-
-    if (queue.length === 0) {
-        broadcastStatus('⚠️ No new jobs found on dashboard. Proceeding to Phase 2…', 'warn');
-        await sleep(2000);
-        await runResumeBuilderQueue();
-        finishQueue();
-        return;
-    }
-
-    broadcastStatus(`📋 Found ${queue.length} job(s). Starting sequential processing…`, 'info');
-    await runQueue();
+    // Phase 1: Sequential processing with dynamic fetching
+    broadcastStatus('📋 Starting sequential processing (dynamic mode)…', 'info');
+    await runDynamicQueue();
 }
 
 // ─── Job Collection ──────────────────────────────────────────────────────────
@@ -258,63 +257,55 @@ function requestJobCollection() {
 
 // ─── Main Queue Loop ─────────────────────────────────────────────────────────
 
-async function runQueue() {
-    for (let i = 0; i < queue.length; i++) {
+async function runDynamicQueue() {
+    let iteration = 0;
+    
+    while (true) {
         if (stopRequested) {
             broadcastStatus('⏹ Processing stopped by user.', 'warn');
             break;
         }
 
-        const rawJob = queue[i];
-        const jobId = generateJobId(rawJob.title || `job_${i}`, rawJob.company || 'unknown');
-        const jobNum = `[${i + 1}/${queue.length}]`;
+        iteration++;
+        const jobTag = `[Job ${iteration}]`;
 
-        // ── Deduplication [DISABLED] ──────────────────────────────────────────
-        // 1. Check runtime session history
-        // if (await isAlreadyProcessed(jobId)) {
-        //     broadcastStatus(`⏭ ${jobNum} Skipping already-processed (session) job: "${rawJob.title}"`, 'warn');
-        //     continue;
-        // }
+        // 1. Fetch the next available "New" job from the dashboard
+        broadcastStatus(`🔍 ${jobTag} Fetching next available job…`, 'info');
+        let nextJobData;
+        try {
+            nextJobData = await getNextJobFromDashboard();
+        } catch (err) {
+            log('ERROR', 'Failed to fetch next job', err);
+            broadcastStatus(`❌ ${jobTag} Error fetching job: ${err.message}`, 'error');
+            break; 
+        }
 
-        // 2. Check persistent storage (scrapedJobs)
-        // if (await isJobAlreadyScraped(jobId)) {
-        //     broadcastStatus(`⏭ ${jobNum} Skipping already-scraped (storage) job: "${rawJob.title}"`, 'warn');
-        //     // Mark as processed in session so we don't check storage again this run
-        //     await markAsProcessed(jobId);
-        //     continue;
-        // }
+        if (!nextJobData || !nextJobData.job) {
+            broadcastStatus(`🏁 Phase 1 complete. No more jobs found on the current page.`, 'success');
+            break;
+        }
 
-        // 3. Strict Status Check (Backup) [DISABLED]
-        // if (rawJob.status !== "New") {
-        //     broadcastStatus(`⏭ ${jobNum} Skipping (Not New): "${rawJob.title}"`, 'warn');
-        //     continue;
-        // }
+        const rawJob = nextJobData.job;
+        const jobId = generateJobId(rawJob.title || `job_${iteration}`, rawJob.company || 'unknown');
 
-        broadcastStatus(`⚙️ ${jobNum} Processing: "${rawJob.title}"`, 'info');
+        broadcastStatus(`⚙️ ${jobTag} Processing: "${rawJob.title}" (at index ${rawJob.index})`, 'info');
 
         try {
             // Strict Sequential Lock
-            await processSingleJob(rawJob, jobId, i, jobNum);
+            await processSingleJob(rawJob, jobId, rawJob.index, jobTag);
             processedCount++;
-            broadcastStatus(`✅ ${jobNum} Done: "${rawJob.title}"`, 'success');
+            broadcastStatus(`✅ ${jobTag} Done: "${rawJob.title}"`, 'success');
         } catch (err) {
             failedCount++;
             await updateStats('failed');
-            log('ERROR', `${jobNum} Job failed`, { title: rawJob.title, error: err.message });
-            broadcastStatus(`❌ ${jobNum} Failed: "${rawJob.title}" — ${err.message}`, 'error');
+            log('ERROR', `${jobTag} Job failed`, { title: rawJob.title, error: err.message });
+            broadcastStatus(`❌ ${jobTag} Failed: "${rawJob.title}" — ${err.message}`, 'error');
         }
 
-        // Wait before next job (except after the last)
-        if (i < queue.length - 1) {
-            broadcastStatus(`⏱ Waiting ${JOB_DELAY_MS / 1000}s before next job…`, 'info');
-            await sleep(JOB_DELAY_MS);
-        }
+        // Wait for DOM to update and provide spacing between runs
+        broadcastStatus(`⏱ Waiting 3s for UI stability…`, 'info');
+        await sleep(3000); 
     }
-
-    broadcastStatus(
-        `🏁 Phase 1 (Scraping) complete. ✅ ${processedCount} succeeded, ❌ ${failedCount} failed.`,
-        'success'
-    );
 
     // --- Phase 2: Resume Builder ---
     broadcastStatus('🚀 Starting Phase 2: JD Resume Builder…', 'info');
@@ -564,6 +555,20 @@ async function runResumeBuilderQueue() {
 
 
 // ─── Popup Data via Dashboard Content Script ──────────────────────────────────
+
+function getNextJobFromDashboard() {
+    return new Promise((resolve, reject) => {
+        chrome.tabs.sendMessage(dashboardTabId, { type: MSG.GET_NEXT_JOB }, response => {
+            if (chrome.runtime.lastError) {
+                return reject(new Error(chrome.runtime.lastError.message));
+            }
+            if (response && response.error) {
+                return reject(new Error(response.error));
+            }
+            resolve(response);
+        });
+    });
+}
 
 function getPopupData(rowIndex) {
     return new Promise((resolve, reject) => {

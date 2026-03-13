@@ -307,7 +307,7 @@ async function handleBuildResume(job) {
 
                         // Persist resume_id in backend jobs.json
                         try {
-                            await fetch('https://recruitpulse.algofolks.com/api/capture-resume-id', {
+                            await fetch('http://localhost:5350/api/capture-resume-id', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
@@ -368,7 +368,7 @@ async function generateAndDownloadResumePDF(job, resumeEditUrl = null) {
         log('INFO', `Extracted resume HTML (${resumeHtml.length} chars)`);
 
         // 2. Send to Backend
-        const API_URL = 'https://recruitpulse.algofolks.com/api/generate-resume-pdf';
+        const API_URL = 'http://localhost:5350/api/generate-resume-pdf';
 
         // Fetch Telegram configuration from storage
         const storage = await chrome.storage.local.get(['telegram_config']);
@@ -442,7 +442,7 @@ window.generateAndDownloadResumePDF = generateAndDownloadResumePDF;
     // 1. Look up the job_id for this resume from the backend
     async function lookupJobId() {
         try {
-            const resp = await fetch(`https://recruitpulse.algofolks.com/api/job-by-resume/${pageResumeId}`);
+            const resp = await fetch(`http://localhost:5350/api/job-by-resume/${pageResumeId}`);
             const data = await resp.json();
             if (data.success && data.job) {
                 linkedJobId = data.job.jobId;

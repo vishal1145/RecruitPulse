@@ -30,6 +30,9 @@ const MSG = {
     // Background <-> Popup
     STATUS_UPDATE: 'STATUS_UPDATE',
     QUEUE_STATE: 'QUEUE_STATE',
+
+    // Dynamic Processing
+    GET_NEXT_JOB: 'GET_NEXT_JOB',
 };
 
 // ─── Logger ──────────────────────────────────────────────────────────────────
@@ -245,6 +248,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 });
             return true;
 
+        case MSG.GET_NEXT_JOB:
+            getNextJobFromTable()
+                .then(job => {
+                    sendResponse({ ok: true, job });
+                })
+                .catch(err => {
+                    log('ERROR', 'Failed to get next job', err);
+                    sendResponse({ ok: false, error: err.message });
+                });
+            return true;
+
         default:
             break;
     }
@@ -253,39 +267,191 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ─── Job Collection ──────────────────────────────────────────────────────────
 
 async function collectJobRows() {
-    // Selector for the job table rows
-    // Based on inspection: rows are inside a table body
-    const rows = Array.from(document.querySelectorAll('tbody tr'));
-
-    if (rows.length === 0) {
-        log('WARN', 'No job rows found in tbody. Trying generic tr...');
-        // Fallback
-        const allRows = Array.from(document.querySelectorAll('tr'));
-        // Filter out header rows (usually th)
-        return allRows.filter(r => r.querySelector('td')).map(parseRow);
+    // 1. Verify we are on the correct page
+    if (!window.location.href.includes('/job-search-ai-agent')) {
+        throw new Error(
+            `Expected /job-search-ai-agent page, but current URL is: ${window.location.href}`
+        );
     }
 
-    // Parse all rows
-    const parsedJobs = rows.map((row, index) => parseRow(row, index));
+    // 2. Select "New" from the status dropdown filter
+    log('INFO', 'Selecting "New" from status dropdown filter...');
+    await selectStatusFilter('New');
 
-    // Filter: Process ONLY "New" jobs (unless testing flag is ON)
-    const newJobs = parsedJobs.filter(job => {
-        const status = job.status ? job.status.trim() : "";
-        const isNew = status === 'New';
+    // 3. Collect only from the current page
+    log('INFO', 'Collecting new job rows from current page...');
+    return await collectCurrentPageJobs();
+}
 
-        if (isNew) return true;
+/**
+ * Opens the status dropdown and selects the given option.
+ * Waits for the table to refresh after selection.
+ */
+async function selectStatusFilter(statusOption) {
+    // Wait for the dropdown trigger button to render (shows "All" by default)
+    let dropdownBtn = null;
+    try {
+        await waitForCondition(() => {
+            // Radix/shadcn Select uses button[role="combobox"]
+            const comboboxes = Array.from(document.querySelectorAll('button[role="combobox"]'));
+            dropdownBtn = comboboxes.find(btn => {
+                const txt = (btn.innerText || btn.textContent || '').trim();
+                return txt === 'All' || txt === 'New' || txt === 'Reviewed' ||
+                    txt === 'Outreached' || txt === 'Applied' || txt === 'Archived';
+            });
+            return !!dropdownBtn;
+        }, 10000);
+    } catch (e) {
+        throw new Error('Status filter dropdown not found on /job-search-ai-agent page');
+    }
 
-        if (ALLOW_REVIEWED_FOR_TESTING) {
-            log('WARN', `⚠ Testing Mode: Processing Reviewed Job → ${job.title} [Status: "${status}"]`);
-            return true;
+    // If dropdown is already set to the desired option, skip
+    const currentValue = (dropdownBtn.innerText || dropdownBtn.textContent || '').trim();
+    if (currentValue === statusOption) {
+        log('INFO', `Dropdown already set to "${statusOption}". Skipping click.`);
+        await waitForTableRefresh();
+        return;
+    }
+
+    // Click to open the dropdown
+    log('INFO', `Opening status dropdown (currently: "${currentValue}")...`);
+    simulateRealClick(dropdownBtn);
+
+    // Wait for the option list to appear
+    let targetOption = null;
+    try {
+        await waitForCondition(() => {
+            const options = Array.from(document.querySelectorAll('[role="option"]'));
+            targetOption = options.find(opt => {
+                const txt = (opt.innerText || opt.textContent || '').trim();
+                return txt === statusOption;
+            });
+            return !!targetOption;
+        }, 5000);
+    } catch (e) {
+        throw new Error(`"${statusOption}" option not found in status dropdown`);
+    }
+
+    // Click the target option
+    log('INFO', `Clicking "${statusOption}" option...`);
+    simulateRealClick(targetOption);
+
+    // Wait for the table to refresh after selection
+    await sleep(1000); // Give it a moment to start updating
+    await waitForTableRefresh();
+}
+
+/**
+ * Waits until the job table shows rows or a known empty-state message.
+ * Now improved to ignore "phantom" rows or loading states.
+ */
+async function waitForTableRefresh(timeout = 8000) {
+    // Give React a tick to start re-rendering
+    await sleep(500);
+
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        const rows = Array.from(document.querySelectorAll('tbody tr'));
+        
+        // Filter out rows that are clearly not job data (e.g. loading skeletons, empty states)
+        const realRows = rows.filter(row => {
+            const cells = row.querySelectorAll('td');
+            return cells.length >= 3; // Job rows have at least 4 cells
+        });
+
+        if (realRows.length > 0) {
+            log('INFO', `waitForTableRefresh: Found ${realRows.length} real data row(s).`);
+            return;
         }
 
-        log('INFO', `Skipping (Not New): ${job.title} [Status: "${status}"]`);
+        await sleep(300);
+    }
+    log('WARN', 'waitForTableRefresh: timeout reached, proceeding anyway.');
+}
+
+/**
+ * Collect jobs from the current page only.
+ */
+async function collectCurrentPageJobs() {
+    const allJobs = [];
+
+    // Wait for the current page's rows to be present
+    await waitForTableRefresh(5000);
+
+    const rows = Array.from(document.querySelectorAll('tbody tr')).filter(row => {
+        const cells = row.querySelectorAll('td');
+        return cells.length >= 3;
+    });
+
+    if (rows.length === 0) {
+        log('INFO', `Current page: No real data rows found.`);
+        return [];
+    }
+
+    log('INFO', `Current page: Found ${rows.length} total real row(s)`);
+
+    const pageJobs = rows.map((row, idx) => parseRow(row, idx));
+    
+    // Log the parsed statuses for debugging
+    log('DEBUG', 'Parsed statuses:', pageJobs.map(j => j.status));
+
+    // Filter only those that say "New". 
+    // We make it more flexible in case of weird whitespace or hidden characters.
+    const newJobs = pageJobs.filter(job => {
+        const s = job.status.toLowerCase();
+        return s.includes('new') || s === 'n'; // Some UI badges might be truncated or use icons
+    });
+    
+    log('INFO', `Current page: Found ${pageJobs.length} total row(s), ${newJobs.length} are "New"`);
+    allJobs.push(...newJobs);
+
+    log('INFO', `Finished scanning current page. Total collected: ${allJobs.length} job(s).`);
+    return allJobs;
+}
+
+/**
+ * Dynamically finds the first "New" job row and parses it.
+ * This is used to fix the "disappearing row" issue.
+ */
+async function getNextJobFromTable() {
+    log('INFO', 'Searching for next available "New" job...');
+    
+    // 1. Wait for table to be ready
+    await waitForTableRefresh(3000);
+
+    // 2. Query all rows
+    const rows = Array.from(document.querySelectorAll('tbody tr')).filter(row => {
+        const cells = row.querySelectorAll('td');
+        return cells.length >= 3;
+    });
+
+    if (rows.length === 0) {
+        log('INFO', 'No rows found in table.');
+        return null;
+    }
+
+    // 3. Find first row with "New" status
+    let foundIndex = -1;
+    const targetRow = rows.find((row, idx) => {
+        const status = safeText(row.querySelector('td:first-child')).toLowerCase();
+        if (status.includes('new') || status === 'n') {
+            foundIndex = idx;
+            return true;
+        }
         return false;
     });
 
-    return newJobs;
+    if (!targetRow) {
+        log('INFO', 'No more "New" jobs found on current page.');
+        return null;
+    }
+
+    log('INFO', `Found "New" job at current table index ${foundIndex}`);
+    
+    // 4. Return the parsed job data with its dynamic index
+    return parseRow(targetRow, foundIndex);
 }
+
 
 function parseRow(row, index) {
     const cells = Array.from(row.querySelectorAll('td'));

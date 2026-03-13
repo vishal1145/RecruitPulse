@@ -25,7 +25,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://landbetterjobs.com/dashboard*"
+        "https://landbetterjobs.com/job-search-ai-agent*"
       ],
       "js": [
         "content/dashboard.js"
