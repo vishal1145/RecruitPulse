@@ -772,8 +772,8 @@ function scrapeExternalJobPage() {
 
 function finishQueue() {
     if (dashboardTabId) {
-        log('INFO', 'Redirecting dashboard tab back to dashboard...');
-        chrome.tabs.update(dashboardTabId, { url: 'https://landbetterjobs.com/dashboard' });
+        log('INFO', 'Redirecting dashboard tab back to Job Search AI Agent...');
+        chrome.tabs.update(dashboardTabId, { url: 'https://landbetterjobs.com/job-search-ai-agent' });
     }
     isRunning = false;
     stopRequested = false;
