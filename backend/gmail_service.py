@@ -109,6 +109,7 @@ class GmailService:
         Returns (True, draft_object) on success, (False, error_str) on failure.
         """
         try:
+            logger.info(f"Attempting to create draft in thread {thread_id}...")
             message = MIMEMultipart()
             message['to'] = to_email
             message['subject'] = subject
@@ -142,6 +143,22 @@ class GmailService:
             return True, draft
 
         except Exception as e:
-            logger.error(f"Failed to create draft in thread {thread_id}: {e}")
+            if "404" in str(e):
+                logger.warning(f"Thread {thread_id} not found (404). This often happens if the thread only contained the draft being updated.")
+            else:
+                logger.error(f"Failed to create draft in thread {thread_id}: {e}")
             return False, str(e)
+
+    def get_draft(self, draft_id):
+        """
+        Fetches a Gmail draft by ID.
+        """
+        try:
+            logger.info(f"Fetching Gmail draft: {draft_id}")
+            draft = self.service.users().drafts().get(userId='me', id=draft_id).execute()
+            return draft
+        except Exception as e:
+            logger.error(f"Failed to fetch draft {draft_id}: {e}")
+            return None
+
 

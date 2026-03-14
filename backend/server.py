@@ -568,35 +568,51 @@ def update_draft():
                     f.write(pdf_bytes)
                 logger.info(f"Saved updated PDF ({len(pdf_bytes)} bytes) to {pdf_path}")
 
-            # 3. Delete old Gmail draft
+            # 3. Create new draft with same email content + updated PDF
             gmail_service = GmailService()
-            if old_draft_id:
-                delete_ok = gmail_service.delete_draft(old_draft_id)
-                if delete_ok:
-                    logger.info(f"Deleted old draft {old_draft_id}")
-                else:
-                    logger.warning(f"Could not delete old draft {old_draft_id}, proceeding anyway.")
-
-            # 4. Create new draft with same email content + updated PDF
             to_email = job_data.get('applyEmail')
             subject = job_data.get('emailSubject')
             body = job_data.get('emailBody')
 
+            # Fetch existing draft to ensure we have the latest threadId if possible
+            existing_draft = None
+            if old_draft_id:
+                existing_draft = gmail_service.get_draft(old_draft_id)
+            
+            # Use threadId from existing draft if found, otherwise from job_data
+            active_thread_id = gmail_thread_id
+            if existing_draft:
+                active_thread_id = existing_draft.get('message', {}).get('threadId', active_thread_id)
+                logger.info(f"Using threadId {active_thread_id} from fetched draft.")
+
             success = False
             new_draft = None
 
-            if gmail_thread_id:
+            # Attempt to create in existing thread
+            if active_thread_id:
                 success, new_draft = gmail_service.create_draft_in_thread(
-                    to_email, subject, body, pdf_path, gmail_thread_id
+                    to_email, subject, body, pdf_path, active_thread_id
                 )
 
+            # Fallback to new draft creation if thread-based failed or no thread_id
             if not success:
+                if active_thread_id:
+                    logger.info("Thread lookup failed or thread was deleted. Falling back to creating a new thread.")
                 success, new_draft = gmail_service.create_draft(
                     to_email, subject, body, pdf_path
                 )
 
             if not success:
+                logger.error(f"Failed to create new draft for job {job_id}: {new_draft}")
                 return jsonify({"success": False, "error": f"Failed to create new draft: {new_draft}"}), 500
+
+            # 4. Delete old Gmail draft ONLY after new one is successfully created
+            if old_draft_id:
+                delete_ok = gmail_service.delete_draft(old_draft_id)
+                if delete_ok:
+                    logger.info(f"Deleted old draft {old_draft_id} after creating new draft.")
+                else:
+                    logger.warning(f"Could not delete old draft {old_draft_id}, proceeding anyway.")
 
             # 5. Update jobs.json with new draft metadata
             new_draft_id = new_draft.get('id')
@@ -604,6 +620,7 @@ def update_draft():
             _update_job_field(job_id, 'gmailDraftId', new_draft_id)
             if new_thread_id:
                 _update_job_field(job_id, 'gmailThreadId', new_thread_id)
+
 
             # 6. Build Telegram confirmation
             company = job_data.get('company', 'Company')
@@ -1043,6 +1060,13 @@ def _start_telegram_polling():
 
     _telegram_polling_active = True
     offset = None
+
+    # Resolve 409 Conflict by deleting any existing webhook before polling
+    try:
+        logger.info("Auto-resolving Telegram conflict by deleting existing webhook...")
+        http_requests.post(f"https://api.telegram.org/bot{bot_token}/deleteWebhook", timeout=10)
+    except Exception as e:
+        logger.error(f"Failed to delete Telegram webhook: {e}")
 
     logger.info("🤖 Telegram polling started.")
 
