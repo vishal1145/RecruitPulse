@@ -45,7 +45,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // ── From Popup ────────────────────────────────────────────────────────
         case MSG.UPDATE_AUTOMATION:
-            handleUpdateAutomation();
+            handleUpdateAutomation(true); // Force update when explicitly requested from popup
             sendResponse({ ok: true });
             break;
 
@@ -146,9 +146,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ─── Automation ──────────────────────────────────────────────────────────────
 
-chrome.alarms.onAlarm.addListener((alarm) => {
+chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name === 'agentAutomation') {
-        log('INFO', '⏰ Automation alarm triggered. Running agent...');
+        const now = new Date().toISOString();
+        log('INFO', `⏰ Automation alarm triggered at ${now}. Running agent...`);
+        
+        // Track execution
+        await chrome.storage.local.set({ 
+            lastAlarmExecution: now,
+            lastAlarmScheduledTime: alarm.scheduledTime 
+        });
+        
         runAgent();
     }
     if (alarm.name === 'pendingActionPoll') {
@@ -157,31 +165,94 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     }
 });
 
-async function handleUpdateAutomation() {
+chrome.runtime.onStartup.addListener(() => {
+    log('INFO', '🔄 Chrome startup detected - reinitializing alarms');
+    chrome.storage.local.get([STORAGE.AUTOMATION_ENABLED, STORAGE.AUTOMATION_GAP], (data) => {
+        if (data[STORAGE.AUTOMATION_ENABLED] && data[STORAGE.AUTOMATION_GAP]) {
+            setupAutomation(data[STORAGE.AUTOMATION_GAP], true);
+        }
+    });
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+    log('INFO', '🔄 Extension installed/updated - initializing alarms');
+    chrome.storage.local.get([STORAGE.AUTOMATION_ENABLED, STORAGE.AUTOMATION_GAP], (data) => {
+        if (data[STORAGE.AUTOMATION_ENABLED] && data[STORAGE.AUTOMATION_GAP]) {
+            setupAutomation(data[STORAGE.AUTOMATION_GAP], true);
+        }
+    });
+});
+
+async function handleUpdateAutomation(force = false) {
     const data = await chrome.storage.local.get([STORAGE.AUTOMATION_ENABLED, STORAGE.AUTOMATION_GAP]);
     if (data[STORAGE.AUTOMATION_ENABLED] && data[STORAGE.AUTOMATION_GAP]) {
-        setupAutomation(data[STORAGE.AUTOMATION_GAP]);
+        setupAutomation(data[STORAGE.AUTOMATION_GAP], force);
     } else {
         log('INFO', 'Automation disabled. Clearing alarm.');
         chrome.alarms.clear('agentAutomation');
     }
 }
 
-function setupAutomation(gapMinutes) {
+async function setupAutomation(gapMinutes, force = false) {
+    if (!force) {
+        const existingAlarm = await chrome.alarms.get('agentAutomation');
+        if (existingAlarm) {
+            log('INFO', `Automation alarm already exists. Scheduled for: ${new Date(existingAlarm.scheduledTime).toLocaleString()}`);
+            return;
+        }
+    }
+
+    // Clear any existing alarm first to avoid duplicates
+    await chrome.alarms.clear('agentAutomation');
+
     chrome.alarms.create('agentAutomation', {
         delayInMinutes: gapMinutes,
         periodInMinutes: gapMinutes
     });
-    log('INFO', `Automation scheduled every ${gapMinutes} minutes.`);
+    
+    // Verify alarm was created
+    const verifyAlarm = await chrome.alarms.get('agentAutomation');
+    if (verifyAlarm) {
+        const nextRun = new Date(verifyAlarm.scheduledTime).toLocaleString();
+        log('INFO', `✅ Automation scheduled every ${gapMinutes} minutes. Next run: ${nextRun}`);
+        
+        // Store last setup time for debugging
+        await chrome.storage.local.set({ 
+            lastAlarmSetup: new Date().toISOString(),
+            nextScheduledRun: verifyAlarm.scheduledTime 
+        });
+    } else {
+        log('ERROR', '❌ Failed to create automation alarm!');
+    }
 }
 
 // ─── Initialization ──────────────────────────────────────────────────────────
+
+// Service Worker Keepalive: Prevent premature termination
+let keepalivePort = null;
+
+function ensureServiceWorkerAlive() {
+    if (keepalivePort) return;
+    
+    keepalivePort = chrome.runtime.connect({ name: 'keepalive' });
+    keepalivePort.onDisconnect.addListener(() => {
+        keepalivePort = null;
+        log('INFO', '🔌 Keepalive port disconnected - service worker may terminate');
+    });
+    
+    log('INFO', '🔌 Keepalive port established');
+}
 
 // Check automation settings on load
 chrome.storage.local.get([STORAGE.AUTOMATION_ENABLED, STORAGE.AUTOMATION_GAP], (data) => {
     if (data[STORAGE.AUTOMATION_ENABLED] && data[STORAGE.AUTOMATION_GAP]) {
         log('INFO', 'Restoring automation schedule on startup');
-        setupAutomation(data[STORAGE.AUTOMATION_GAP]);
+        setupAutomation(data[STORAGE.AUTOMATION_GAP], true);
+        
+        // Establish keepalive for long-interval alarms
+        if (data[STORAGE.AUTOMATION_GAP] > 5) {
+            ensureServiceWorkerAlive();
+        }
     }
 });
 
