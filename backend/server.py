@@ -268,7 +268,7 @@ def generate_resume_pdf():
             return jsonify({"success": False, "error": "Missing resumeHtml in payload"}), 400
 
         # 1. Generate PDF
-        filename = pdf_service.generate_pdf(html_content, job_id, title)
+        filename = pdf_service.generate_pdf(html_content, job_id, title, resume_edit_url)
         if not filename:
             return jsonify({"success": False, "error": "Failed to generate PDF"}), 500
 
@@ -513,6 +513,7 @@ def update_draft():
         job_id = data.get('job_id')
         resume_html = data.get('resume_html')
         pdf_base64 = data.get('pdf_base64')
+        resume_edit_url = data.get('resume_edit_url')
 
         if not job_id:
             return jsonify({"success": False, "error": "Missing required field: job_id"}), 400
@@ -553,8 +554,8 @@ def update_draft():
 
             # 2. Generate or decode PDF
             if resume_html:
-                # Generate PDF from HTML using WeasyPrint (same as /api/generate-resume-pdf)
-                pdf_filename = pdf_service.generate_pdf(resume_html, job_id, title)
+                # Generate PDF from HTML using Puppeteer (preferred) or WeasyPrint (fallback)
+                pdf_filename = pdf_service.generate_pdf(resume_html, job_id, title, resume_edit_url)
                 if not pdf_filename:
                     return jsonify({"success": False, "error": "Failed to generate PDF from HTML"}), 500
                 pdf_path = os.path.join(PDF_OUTPUT_DIR, pdf_filename)

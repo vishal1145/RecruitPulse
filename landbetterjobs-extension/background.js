@@ -1206,6 +1206,7 @@ async function handlePendingAction(action) {
             body: JSON.stringify({
                 job_id: job_id,
                 resume_html: resumeHtml,
+                resume_edit_url: resumeEditUrl
             })
         });
 

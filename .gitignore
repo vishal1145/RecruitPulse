@@ -4,16 +4,29 @@ backend/__pycache__/
 backend/.env
 backend/generated_pdfs/
 
+# Node
+node_modules/
+backend/node_modules/
+package-lock.json
+backend/package-lock.json
+package.json
+backend/package.json
+
 # OS
 .DS_Store
 Thumbs.db
 
 # Logs
 *.log
+
 # Secrets and Data
 backend/token.json
 backend/jobs.json
+backend/pending_actions.json
 # backend/service-account.json
 backend/telegram_config.json
 backend/test_google_docs.py
 server_extension/
+
+# Debug
+/tmp/resume_debug.html
