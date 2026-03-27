@@ -9,12 +9,17 @@ import logging
 import base64 as b64
 import threading
 import time
+from dotenv import load_dotenv
 from job_email_service import JobEmailService
 from pdf_service import PdfService
 import email_pipeline
 import config
 from gmail_service import GmailService
 import scheduler  # Starts APScheduler background job on import
+from db import mongodb
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -244,6 +249,239 @@ def get_all_jobs():
         print(f"❌ Error in GET /api/jobs: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
+@app.route('/api/interview-prep', methods=['POST'])
+def save_interview_prep():
+    """
+    Save interview preparation data to Vector DB (RAG).
+    Converts JSON to markdown and uploads to RAG endpoint.
+    """
+    try:
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({"success": False, "error": "No JSON data provided"}), 400
+        
+        job_id = data.get('jobId')
+        position = data.get('position', 'Unknown Position')
+        company = data.get('company', 'Unknown Company')
+        scraped_data = data.get('scrapedData', {})
+        
+        if not job_id:
+            return jsonify({"success": False, "error": "Missing jobId in payload"}), 400
+        
+        # Format data as markdown
+        markdown_content = format_interview_prep_as_markdown(
+            job_id, position, company, scraped_data
+        )
+        
+        # Convert markdown to PDF
+        import tempfile
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+        from reportlab.lib.enums import TA_LEFT, TA_CENTER
+        import markdown2
+        
+        # Create temporary PDF file
+        temp_file = tempfile.NamedTemporaryFile(
+            suffix='.pdf', 
+            delete=False
+        )
+        temp_file.close()
+        
+        # Convert markdown to HTML
+        html_content = markdown2.markdown(markdown_content)
+        
+        # Create PDF
+        doc = SimpleDocTemplate(temp_file.name, pagesize=letter,
+                                rightMargin=72, leftMargin=72,
+                                topMargin=72, bottomMargin=18)
+        
+        styles = getSampleStyleSheet()
+        story = []
+        
+        # Split content into paragraphs and add to PDF
+        for line in markdown_content.split('\n'):
+            if line.strip():
+                if line.startswith('# '):
+                    # Main heading
+                    p = Paragraph(line.replace('# ', ''), styles['Heading1'])
+                elif line.startswith('## '):
+                    # Section heading
+                    p = Paragraph(line.replace('## ', ''), styles['Heading2'])
+                elif line.startswith('### '):
+                    # Subsection heading
+                    p = Paragraph(line.replace('### ', ''), styles['Heading3'])
+                elif line.startswith('**') and line.endswith('**'):
+                    # Bold text
+                    p = Paragraph(f'<b>{line.strip("*")}</b>', styles['Normal'])
+                else:
+                    # Normal text
+                    p = Paragraph(line, styles['Normal'])
+                story.append(p)
+                story.append(Spacer(1, 0.1*inch))
+        
+        doc.build(story)
+        
+        try:
+            # Upload to RAG endpoint
+            rag_url = os.getenv('RAG_API_URL', 'https://be-ext.algofolks.com/api/rag/upload')
+            auth_token = os.getenv('RAG_AUTH_TOKEN', '')
+            
+            logger.info(f"Uploading PDF to RAG: {temp_file.name}")
+            logger.info(f"Auth token present: {bool(auth_token)}")
+            
+            # Create descriptive filename with position and company
+            import re
+            # Clean position and company names for filename (remove special chars)
+            clean_position = re.sub(r'[^\w\s-]', '', position).strip().replace(' ', '_')
+            clean_company = re.sub(r'[^\w\s-]', '', company).strip().replace(' ', '_')
+            filename = f'{clean_position}_at_{clean_company}_Interview_Prep.pdf'
+            
+            with open(temp_file.name, 'rb') as f:
+                files = {'document': (filename, f, 'application/pdf')}
+                
+                # Add metadata for better chunk filtering and search
+                metadata = {
+                    'jobId': job_id,
+                    'position': position,
+                    'company': company,
+                    'position_company': f'{position}_{company}',
+                    'type': 'interview_prep',
+                    'uploadedAt': data.get('scrapedAt', '')
+                }
+                
+                form_data = {
+                    'metadata': json.dumps(metadata)
+                }
+                
+                headers = {}
+                if auth_token:
+                    headers['Authorization'] = f'Bearer {auth_token}'
+                
+                response = http_requests.post(rag_url, files=files, data=form_data, headers=headers, timeout=30)
+                
+                if response.status_code in [200, 201]:
+                    logger.info(f"✅ Interview prep data uploaded to Vector DB for job: {job_id}")
+                    questions_count = len(scraped_data.get('questions', {}).get('questions', []))
+                    
+                    return jsonify({
+                        "success": True,
+                        "message": "Interview prep data uploaded to Vector DB successfully",
+                        "jobId": job_id,
+                        "questionsCount": questions_count,
+                        "ragResponse": response.json()
+                    }), 200
+                else:
+                    logger.error(f"RAG upload failed: {response.status_code} - {response.text}")
+                    return jsonify({
+                        "success": False,
+                        "error": f"RAG upload failed: {response.status_code}",
+                        "details": response.text
+                    }), 500
+        finally:
+            # Clean up temp file
+            os.unlink(temp_file.name)
+            
+    except Exception as e:
+        logger.error(f"❌ Error saving interview prep data: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+def format_interview_prep_as_markdown(job_id, position, company, scraped_data):
+    """
+    Format scraped interview prep data as markdown for vector DB.
+    """
+    md = f"# Interview Preparation: {position} at {company}\n\n"
+    md += f"**Job ID:** {job_id}\n"
+    md += f"**Scraped At:** {scraped_data.get('scrapedAt', 'N/A')}\n\n"
+    md += "---\n\n"
+    
+    # Questions section
+    questions_data = scraped_data.get('questions', {})
+    if questions_data:
+        md += "## 📋 Interview Questions\n\n"
+        
+        # Fit Analysis
+        fit_analysis = questions_data.get('fitAnalysis', '')
+        if fit_analysis:
+            md += f"### Fit Analysis\n\n{fit_analysis}\n\n"
+        
+        # Questions
+        questions = questions_data.get('questions', [])
+        if questions:
+            md += f"### Questions ({len(questions)} total)\n\n"
+            
+            current_section = None
+            for i, q in enumerate(questions, 1):
+                section = q.get('section', 'General')
+                if section != current_section:
+                    md += f"\n#### {section}\n\n"
+                    current_section = section
+                
+                question_text = q.get('question', 'N/A')
+                answer_text = q.get('answer', 'N/A')
+                tags = q.get('tags', [])
+                difficulty = q.get('difficulty', 'unknown')
+                
+                md += f"**Q{i}:** {question_text}\n\n"
+                md += f"**Answer:** {answer_text}\n\n"
+                if tags:
+                    md += f"*Tags: {', '.join(tags)}* | *Difficulty: {difficulty}*\n\n"
+                md += "---\n\n"
+    
+    # Insights section
+    insights_data = scraped_data.get('insights', {})
+    if insights_data and insights_data.get('insights'):
+        insights = insights_data['insights']
+        md += "## 💡 Company Insights\n\n"
+        
+        # Culture
+        if insights.get('culture'):
+            md += f"### Culture\n\n{insights['culture']}\n\n"
+        
+        # Values
+        if insights.get('values'):
+            md += "### Values\n\n"
+            for value in insights['values']:
+                md += f"- {value}\n"
+            md += "\n"
+        
+        # Interview Process
+        if insights.get('interviewProcess'):
+            md += f"### Interview Process\n\n{insights['interviewProcess']}\n\n"
+        
+        # Company-Specific Tips
+        if insights.get('companySpecificTips'):
+            md += "### Company-Specific Tips\n\n"
+            for tip in insights['companySpecificTips']:
+                md += f"- {tip}\n"
+            md += "\n"
+        
+        # Salary Insights
+        salary = insights.get('salaryInsights', {})
+        if salary:
+            md += "### 💰 Salary Insights\n\n"
+            if salary.get('estimatedRange'):
+                md += f"**Estimated Range:**\n\n{salary['estimatedRange']}\n\n"
+            if salary.get('negotiationTips'):
+                md += "**Negotiation Tips:**\n\n"
+                for tip in salary['negotiationTips']:
+                    md += f"- {tip}\n"
+                md += "\n"
+        
+        # Red Flags
+        if insights.get('redFlags'):
+            md += "### 🚩 Red Flags to Avoid\n\n"
+            for flag in insights['redFlags']:
+                md += f"- {flag}\n"
+            md += "\n"
+    
+    md += "\n---\n\n"
+    md += f"*Document generated for vector search and RAG queries*\n"
+    
+    return md
+
+
 @app.route('/api/generate-resume-pdf', methods=['POST'])
 def generate_resume_pdf():
     """
@@ -268,7 +506,7 @@ def generate_resume_pdf():
             return jsonify({"success": False, "error": "Missing resumeHtml in payload"}), 400
 
         # 1. Generate PDF
-        filename = pdf_service.generate_pdf(html_content, job_id, title, resume_edit_url)
+        filename = pdf_service.generate_pdf(html_content, job_id, title, resume_edit_url, company)
         if not filename:
             return jsonify({"success": False, "error": "Failed to generate PDF"}), 500
 
@@ -313,16 +551,38 @@ def generate_resume_pdf():
             _update_job_with_draft_metadata(job_id, draft_metadata)
 
             # 5. Send Telegram Notification (enriched, single consolidated message)
-
-            telegram_lines = [
-                f"📝 <b>Gmail Draft Created</b>",
-                f"",
-                f"🏢 <b>Company:</b> {company}",
-                f"💼 <b>Role:</b> {title}",
-                f"📧 <b>To:</b> {job_data.get('applyEmail')}",
-                f"📎 <b>File:</b> {filename}",
-                f"🆔 <b>Draft ID:</b> {draft_metadata.get('gmailDraftId', 'N/A')}",
-            ]
+            # Check if email was auto-sent or requires manual review
+            auto_sent = draft_metadata.get('autoSent', False)
+            placeholders_found = draft_metadata.get('placeholdersFound', 0)
+            
+            if auto_sent:
+                # Email was automatically sent
+                telegram_lines = [
+                    f"✅ <b>Email Sent Automatically</b>",
+                    f"",
+                    f"🏢 <b>Company:</b> {company}",
+                    f"💼 <b>Role:</b> {title}",
+                    f"📧 <b>To:</b> {job_data.get('applyEmail')}",
+                    f"📎 <b>File:</b> {filename}",
+                    f"🆔 <b>Message ID:</b> {draft_metadata.get('gmailDraftId', 'N/A')}",
+                    f"",
+                    f"✨ <b>No placeholders detected - email sent automatically!</b>",
+                ]
+            else:
+                # Draft created for manual review (placeholders found)
+                telegram_lines = [
+                    f"📝 <b>Gmail Draft Created - Manual Review Required</b>",
+                    f"",
+                    f"🏢 <b>Company:</b> {company}",
+                    f"💼 <b>Role:</b> {title}",
+                    f"📧 <b>To:</b> {job_data.get('applyEmail')}",
+                    f"📎 <b>File:</b> {filename}",
+                    f"🆔 <b>Draft ID:</b> {draft_metadata.get('gmailDraftId', 'N/A')}",
+                ]
+                if placeholders_found > 0:
+                    telegram_lines.append(f"")
+                    telegram_lines.append(f"⚠️ <b>Found {placeholders_found} placeholder(s) - please review and fill them in</b>")
+            
             if resume_edit_url:
                 telegram_lines.append(f"\n✏️ <b>Edit Resume:</b>\n{resume_edit_url}")
             if job_url:
@@ -334,21 +594,25 @@ def generate_resume_pdf():
                 telegram_lines.append(f"\n📩 <b>Initial Message:</b>\n{initial_msg}")
             if followup_msg:
                 telegram_lines.append(f"\n🔁 <b>Follow-up 1:</b>\n{followup_msg}")
-            telegram_lines.append(f"\nReview and send from your Gmail Drafts.")
+            
+            if not auto_sent:
+                telegram_lines.append(f"\nReview and send from your Gmail Drafts.")
 
             telegram_msg = '\n'.join(telegram_lines)
 
-            # Inline keyboard with Update Draft button
-            reply_markup = json.dumps({
-                "inline_keyboard": [
-                    [
-                        {
-                            "text": "🔄 Update Draft",
-                            "callback_data": f"update_draft:{job_id}"
-                        }
+            # Inline keyboard with Update Draft button (only for drafts, not auto-sent)
+            reply_markup = None
+            if not auto_sent:
+                reply_markup = json.dumps({
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "🔄 Update Draft",
+                                "callback_data": f"update_draft:{job_id}"
+                            }
+                        ]
                     ]
-                ]
-            })
+                })
 
             email_pipeline.send_telegram_notification(telegram_msg, pdf_path, reply_markup=reply_markup)
 
@@ -548,6 +812,7 @@ def update_draft():
             old_draft_id = job_data.get('gmailDraftId')
             gmail_thread_id = job_data.get('gmailThreadId')
             title = job_data.get('title', 'Resume')
+            company = job_data.get('company', 'Company')
 
             if not old_draft_id:
                 logger.warning(f"No existing draft_id for job {job_id}. Will create a fresh draft.")
@@ -555,7 +820,7 @@ def update_draft():
             # 2. Generate or decode PDF
             if resume_html:
                 # Generate PDF from HTML using Puppeteer (preferred) or WeasyPrint (fallback)
-                pdf_filename = pdf_service.generate_pdf(resume_html, job_id, title, resume_edit_url)
+                pdf_filename = pdf_service.generate_pdf(resume_html, job_id, title, resume_edit_url, company)
                 if not pdf_filename:
                     return jsonify({"success": False, "error": "Failed to generate PDF from HTML"}), 500
                 pdf_path = os.path.join(PDF_OUTPUT_DIR, pdf_filename)
@@ -563,7 +828,10 @@ def update_draft():
             else:
                 # Decode pre-built PDF from base64
                 pdf_bytes = b64.b64decode(pdf_base64)
-                pdf_filename = data.get('pdf_filename', f"RecruitPulse_{job_id.replace(' ', '_')}_updated.pdf")
+                # Use title_company format for consistency
+                sanitized_title = re.sub(r'[^a-zA-Z0-9]', '_', title)
+                sanitized_company = re.sub(r'[^a-zA-Z0-9]', '_', company)
+                pdf_filename = data.get('pdf_filename', f"{sanitized_title}_{sanitized_company}_updated.pdf")
                 pdf_path = os.path.join(PDF_OUTPUT_DIR, pdf_filename)
                 with open(pdf_path, 'wb') as f:
                     f.write(pdf_bytes)

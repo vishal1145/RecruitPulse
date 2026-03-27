@@ -161,4 +161,21 @@ class GmailService:
             logger.error(f"Failed to fetch draft {draft_id}: {e}")
             return None
 
+    def send_draft(self, draft_id):
+        """
+        Sends a Gmail draft by its ID.
+        Returns True on success, False on failure.
+        """
+        try:
+            logger.info(f"Sending Gmail draft: {draft_id}")
+            sent_message = self.service.users().drafts().send(
+                userId='me',
+                body={'id': draft_id}
+            ).execute()
+            logger.info(f"Draft {draft_id} sent successfully. Message ID: {sent_message.get('id')}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send draft {draft_id}: {e}")
+            return False
+
 

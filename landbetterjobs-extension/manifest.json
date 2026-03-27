@@ -41,6 +41,15 @@
         "content/resumeBuilder.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://landbetterjobs.com/interview-preparation-hub*"
+      ],
+      "js": [
+        "content/interviewPrepHub.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [

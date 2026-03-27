@@ -21,6 +21,11 @@ import {
 } from './utils/helpers.js';
 import { sendJobToAPI } from './utils/api.js';
 
+// ─── Development Mode Configuration ────────────────────────────────────────
+// Set to true to skip Phase 1 (Dashboard Jobs) and Phase 2 (Resume Builder)
+// and jump directly to Phase 3 (Interview Preparation Hub)
+const DEV_MODE_INTERVIEW_PREP_ONLY = false; // Change to false for normal operation
+
 // ─── State ─────────────────────────────────────────────────────────────────
 
 let queue = [];   // Array of raw job objects collected from dashboard
@@ -411,6 +416,22 @@ function requestJobCollection() {
 // ─── Main Queue Loop ─────────────────────────────────────────────────────────
 
 async function runDynamicQueue() {
+    // DEV MODE: Skip Phase 1 and Phase 2 if flag is enabled
+    if (DEV_MODE_INTERVIEW_PREP_ONLY) {
+        log('INFO', '🔧 DEV MODE: Skipping Phase 1 (Dashboard Jobs) and Phase 2 (Resume Builder)');
+        broadcastStatus('🔧 DEV MODE: Jumping directly to Phase 3 (Interview Preparation Hub)…', 'info');
+        await sleep(1000);
+        
+        // --- Phase 3: Interview Preparation Hub ---
+        broadcastStatus('🚀 Starting Phase 3: Interview Preparation Hub…', 'info');
+        await sleep(2000);
+        await runInterviewPrepHubQueue();
+        
+        finishQueue();
+        return;
+    }
+
+    // NORMAL MODE: Run all phases
     let iteration = 0;
     
     while (true) {
@@ -464,6 +485,11 @@ async function runDynamicQueue() {
     broadcastStatus('🚀 Starting Phase 2: JD Resume Builder…', 'info');
     await sleep(2000);
     await runResumeBuilderQueue();
+
+    // --- Phase 3: Interview Preparation Hub ---
+    broadcastStatus('🚀 Starting Phase 3: Interview Preparation Hub…', 'info');
+    await sleep(2000);
+    await runInterviewPrepHubQueue();
 
     finishQueue();
 }
@@ -596,6 +622,7 @@ async function processJobFlow(rawJob, jobId, rowIndex, jobNum) {
         source,
         processedAt: new Date().toISOString(),
         jdResumeBuilt: false,
+        interview_preparation_hub: false,
     };
 
     // --- Save to Local Storage ---
@@ -704,6 +731,113 @@ async function runResumeBuilderQueue() {
     }
 
     broadcastStatus('🏁 Phase 2 (Resume Builder) complete.', 'complete');
+}
+
+// ─── Phase 3: Interview Preparation Hub Queue ────────────────────────────────
+
+async function runInterviewPrepHubQueue() {
+    log('INFO', 'Starting Interview Preparation Hub Queue...');
+
+    // 1. Fetch jobs where jdResumeBuilt is true but interview_preparation_hub is false
+    let jobs = [];
+    try {
+        const storage = await chrome.storage.local.get(['telegram_config']);
+        const telegramConfig = storage.telegram_config || null;
+
+        log('INFO', `Fetching jobs from: ${API_BASE_URL}/api/jobs`);
+        const response = await fetch(`${API_BASE_URL}/api/jobs`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Telegram-Config': telegramConfig ? JSON.stringify(telegramConfig) : ''
+            }
+        });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        jobs = await response.json();
+        log('INFO', `Fetched ${jobs.length} total jobs from API`);
+        
+        // Debug: Log each job's status
+        jobs.forEach((job, idx) => {
+            log('INFO', `Job ${idx + 1}: "${job.title}" - jdResumeBuilt: ${job.jdResumeBuilt}, interview_preparation_hub: ${job.interview_preparation_hub}`);
+        });
+    } catch (err) {
+        log('ERROR', `Failed to fetch jobs from API: ${err.message}`);
+        broadcastStatus(`❌ Failed to fetch jobs for Phase 3: ${err.message}`, 'error');
+        return;
+    }
+
+    const pendingJobs = jobs.filter(job => job.jdResumeBuilt === true && job.interview_preparation_hub !== true);
+    log('INFO', `Filtered to ${pendingJobs.length} pending jobs for interview prep`);
+    
+    if (pendingJobs.length === 0) {
+        broadcastStatus('✅ No pending jobs for Interview Prep Hub. Phase 3 skipped.', 'success');
+        return;
+    }
+
+    broadcastStatus(`🎯 Phase 3: Filling Interview Prep Hub for ${pendingJobs.length} job(s)…`, 'info');
+
+    // 2. Navigate Dashboard Tab to Interview Preparation Hub
+    try {
+        await chrome.tabs.update(dashboardTabId, { url: 'https://landbetterjobs.com/interview-preparation-hub' });
+        await waitForTabComplete(dashboardTabId);
+        await sleep(5000); // Give page more time to fully initialize and render React components
+        log('INFO', 'Interview Prep Hub page loaded, ready to process jobs');
+    } catch (err) {
+        broadcastStatus(`❌ Failed to navigate to Interview Preparation Hub: ${err.message}`, 'error');
+        return;
+    }
+
+    for (let i = 0; i < pendingJobs.length; i++) {
+        const job = pendingJobs[i];
+        const jobNum = `[InterviewPrep ${i + 1}/${pendingJobs.length}]`;
+        broadcastStatus(`🎯 ${jobNum} Filling interview prep for: "${job.title}"`, 'info');
+
+        try {
+            // Send command to interviewPrepHub.js
+            const result = await new Promise((resolve, reject) => {
+                chrome.tabs.sendMessage(dashboardTabId, { type: 'FILL_INTERVIEW_PREP', job }, response => {
+                    if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+                    if (response && response.error) return reject(new Error(response.error));
+                    resolve(response);
+                });
+            });
+
+            if (result && result.success) {
+                // Log scraped data if available
+                if (result.scrapedData) {
+                    log('INFO', `${jobNum} Scraped ${result.questionsCount} questions from interview prep`);
+                    // Data is already saved to MongoDB by the content script
+                }
+                
+                // Update job status in API
+                job.interview_preparation_hub = true;
+                job.interviewPrepHubFilledAt = new Date().toISOString();
+                await sendJobToAPI(job);
+                broadcastStatus(`✅ ${jobNum} Interview prep filled for: "${job.title}"`, 'success');
+            }
+        } catch (err) {
+            log('ERROR', `${jobNum} Interview prep fill failed`, err.message);
+            broadcastStatus(`❌ ${jobNum} Failed: "${job.title}" — ${err.message}`, 'error');
+        }
+
+        if (i < pendingJobs.length - 1) {
+            broadcastStatus(`⏱ Waiting 3s before next interview prep form…`, 'info');
+            await sleep(3000);
+            
+            // Navigate back to base URL to avoid being stuck on unique result URL
+            log('INFO', 'Navigating back to base interview-preparation-hub URL...');
+            await chrome.tabs.update(dashboardTabId, { url: 'https://landbetterjobs.com/interview-preparation-hub' });
+            await waitForTabComplete(dashboardTabId);
+            await sleep(3000); // Give page time to fully load before next job
+            log('INFO', 'Ready to process next job');
+        }
+    }
+
+    // Wait a bit to ensure all scraping is complete before navigating away
+    log('INFO', 'Waiting 5s to ensure all scraping operations are complete...');
+    await sleep(5000);
+    
+    broadcastStatus('🏁 Phase 3 (Interview Preparation Hub) complete.', 'complete');
 }
 
 

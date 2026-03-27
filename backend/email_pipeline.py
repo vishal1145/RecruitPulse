@@ -1,12 +1,35 @@
 import logging
 import requests
 import os
+import re
 import config
 from gmail_service import GmailService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def detect_placeholders(text):
+    """
+    Detects unfilled placeholders in text using regex /\[.+?\]/gs
+    Returns a list of placeholder matches.
+    """
+    if not text:
+        return []
+    placeholder_pattern = re.compile(r'\[.+?\]', re.DOTALL)
+    matches = placeholder_pattern.findall(text)
+    return matches
+
+def highlight_placeholders(text):
+    """
+    Wraps placeholders in HTML with yellow background highlighting.
+    Returns the modified text with highlighted placeholders.
+    """
+    if not text:
+        return text
+    placeholder_pattern = re.compile(r'(\[.+?\])', re.DOTALL)
+    highlighted = placeholder_pattern.sub(r'<mark style="background-color: yellow;">\1</mark>', text)
+    return highlighted
 
 def send_email_with_attachment(job, pdf_path):
     """
@@ -27,22 +50,74 @@ def send_email_with_attachment(job, pdf_path):
         return False, {}
 
     try:
-        logger.info(f"Creating Gmail draft for {to_email}...")
         gmail_service = GmailService()
-        success, result = gmail_service.create_draft(to_email, subject, body, pdf_path)
-
-        if success:
+        
+        # STEP 1: PLACEHOLDER DETECTION
+        logger.info(f"Scanning email body for placeholders...")
+        placeholders = detect_placeholders(body)
+        
+        if placeholders:
+            logger.info(f"Found {len(placeholders)} placeholder(s) in email body: {placeholders[:3]}...")
+        else:
+            logger.info("No placeholders found in email body.")
+        
+        # STEP 2: DECISION LOGIC
+        if not placeholders:
+            # NO PLACEHOLDERS: Auto-send the email
+            logger.info(f"No placeholders detected. Creating draft and auto-sending to {to_email}...")
+            success, result = gmail_service.create_draft(to_email, subject, body, pdf_path)
+            
+            if not success:
+                logger.error(f"Failed to create Gmail draft: {result}")
+                return False, {}
+            
             draft_id = result.get('id')
             thread_id = result.get('message', {}).get('threadId')
-            logger.info(f"Gmail draft created! Draft ID: {draft_id}, Thread ID: {thread_id}")
-            metadata = {
-                'gmailDraftId': draft_id,
-                'gmailThreadId': thread_id,
-            }
-            return True, metadata
+            
+            # Auto-send the draft
+            send_success = gmail_service.send_draft(draft_id)
+            
+            if send_success:
+                logger.info(f"Email sent automatically! Message ID: {draft_id}")
+                metadata = {
+                    'gmailDraftId': draft_id,
+                    'gmailThreadId': thread_id,
+                    'autoSent': True,
+                    'sentAt': None
+                }
+                return True, metadata
+            else:
+                logger.error(f"Failed to auto-send draft {draft_id}")
+                metadata = {
+                    'gmailDraftId': draft_id,
+                    'gmailThreadId': thread_id,
+                    'autoSent': False
+                }
+                return True, metadata
         else:
-            logger.error(f"Failed to create Gmail draft: {result}")
-            return False, {}
+            # PLACEHOLDERS FOUND: Create draft for manual review with highlighting
+            logger.info(f"Placeholders detected. Creating draft for manual review...")
+            
+            # Highlight placeholders in the body
+            highlighted_body = highlight_placeholders(body)
+            
+            success, result = gmail_service.create_draft(to_email, subject, highlighted_body, pdf_path)
+            
+            if success:
+                draft_id = result.get('id')
+                thread_id = result.get('message', {}).get('threadId')
+                logger.info(f"Gmail draft created for manual review! Draft ID: {draft_id}, Thread ID: {thread_id}")
+                metadata = {
+                    'gmailDraftId': draft_id,
+                    'gmailThreadId': thread_id,
+                    'autoSent': False,
+                    'placeholdersFound': len(placeholders)
+                }
+                return True, metadata
+            else:
+                logger.error(f"Failed to create Gmail draft: {result}")
+                return False, {}
+                
     except Exception as e:
         logger.error(f"Error in Gmail draft creation pipeline: {e}")
         return False, {}

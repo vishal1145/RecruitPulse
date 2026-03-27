@@ -104,11 +104,13 @@ class PdfService:
             logger.warning(f"Failed to preprocess HTML: {e}. Using original HTML.")
             return html_content
 
-    def generate_pdf(self, html_content, jobId, title, resume_edit_url=None):
+    def generate_pdf(self, html_content, jobId, title, resume_edit_url=None, company=None):
         """Generates a PDF from HTML content using WeasyPrint."""
         try:
-            sanitized_job_id = self.sanitize_filename(jobId)
-            filename = f"RecruitPulse_{sanitized_job_id}.pdf"
+            # Generate filename as title_company.pdf
+            sanitized_title = self.sanitize_filename(title) if title else "Resume"
+            sanitized_company = self.sanitize_filename(company) if company else "Company"
+            filename = f"{sanitized_title}_{sanitized_company}.pdf"
             filepath = os.path.join(self.output_dir, filename)
 
             cleaned_html = self.remove_empty_photo_placeholders(html_content)
