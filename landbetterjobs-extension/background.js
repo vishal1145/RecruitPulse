@@ -19,7 +19,7 @@ import {
     log, sleep, retry, generateJobId,
     isAlreadyProcessed, markAsProcessed, updateStats, getDomainGroup,
 } from './utils/helpers.js';
-import { sendJobToAPI } from './utils/api.js';
+import { sendJobToAPI, sendInterviewPrepToAPI } from './utils/api.js';
 
 // ─── Development Mode Configuration ────────────────────────────────────────
 // Set to true to skip Phase 1 (Dashboard Jobs) and Phase 2 (Resume Builder)
@@ -803,10 +803,28 @@ async function runInterviewPrepHubQueue() {
             });
 
             if (result && result.success) {
-                // Log scraped data if available
+                // Send scraped data to API (delegated from content script)
                 if (result.scrapedData) {
-                    log('INFO', `${jobNum} Scraped ${result.questionsCount} questions from interview prep`);
-                    // Data is already saved to MongoDB by the content script
+                    log('INFO', `${jobNum} Scraped ${result.questionsCount} questions. Sending to Vector DB...`);
+                    
+                    const payload = {
+                        jobId: job.jobId,
+                        position: job.title,
+                        company: job.company,
+                        scrapedData: result.scrapedData,
+                        scrapedAt: new Date().toISOString()
+                    };
+                    
+                    try {
+                        const apiResult = await sendInterviewPrepToAPI(payload);
+                        if (apiResult.success) {
+                            log('INFO', `${jobNum} ✅ Successfully sent interview prep to Vector DB`);
+                        } else {
+                            log('WARN', `${jobNum} ⚠️ Failed to send interview prep to Vector DB: ${apiResult.error}`);
+                        }
+                    } catch (err) {
+                        log('ERROR', `${jobNum} ❌ Error sending interview prep: ${err.message}`);
+                    }
                 }
                 
                 // Update job status in API

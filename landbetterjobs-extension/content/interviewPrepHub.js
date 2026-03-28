@@ -923,41 +923,12 @@ async function handleFillInterviewPrep(job) {
         }
         
         // Combine all scraped data
+        // Combined all scraped data for background script processing
         const combinedData = {
             questions: questionsData,
             insights: insightsData,
             scrapedAt: new Date().toISOString()
         };
-        
-        // Send scraped data to Vector DB
-        try {
-            const API_BASE_URL = 'http://localhost:5350';
-            const payload = {
-                jobId: job.jobId,
-                position: position,
-                company: company,
-                scrapedData: combinedData,
-                scrapedAt: new Date().toISOString()
-            };
-            
-            log('INFO', 'Sending scraped data to Vector DB...');
-            const response = await fetch(`${API_BASE_URL}/api/interview-prep`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(payload)
-            });
-            
-            const result = await response.json();
-            if (result.success) {
-                log('INFO', `✓ Data saved to Vector DB: ${result.questionsCount} questions`);
-            } else {
-                log('WARN', `Vector DB save failed: ${result.error}`);
-            }
-        } catch (err) {
-            log('ERROR', `Failed to send data to Vector DB: ${err.message}`);
-        }
         
         log('INFO', 'Interview prep content extraction completed successfully!');
         

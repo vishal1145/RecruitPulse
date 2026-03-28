@@ -1,9 +1,6 @@
-/**
- * api.js
- * Handles all communication with the RecruitPulse backend API.
- */
-
-import { API_ENDPOINT, MAX_RETRIES, RETRY_BASE_DELAY_MS } from './constants.js';
+import { 
+    API_ENDPOINT, API_INTERVIEW_PREP_ENDPOINT, MAX_RETRIES, RETRY_BASE_DELAY_MS 
+} from './constants.js';
 import { log, retry } from './helpers.js';
 
 /**
@@ -65,6 +62,57 @@ export async function sendJobToAPI(jobData) {
     } catch (err) {
         log('ERROR', 'Failed to send job to API after retries', {
             jobId: jobData.jobId,
+            error: err.message,
+        });
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Sends scraped interview preparation data to the backend API for RAG ingestion.
+ *
+ * @param {Object} payload - The interview prep payload
+ * @param {string} payload.jobId       - Unique job identifier
+ * @param {string} payload.position    - Job title/position
+ * @param {string} payload.company     - Company name
+ * @param {Object} payload.scrapedData - Scraped questions and insights
+ * @param {string} payload.scrapedAt   - ISO timestamp
+ *
+ * @returns {Promise<{ success: boolean, response?: Object, error?: string }>}
+ */
+export async function sendInterviewPrepToAPI(payload) {
+    log('INFO', 'Sending interview prep to API', { jobId: payload.jobId });
+
+    try {
+        const result = await retry(
+            async () => {
+                const response = await fetch(API_INTERVIEW_PREP_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Source': 'recruitpulse-extension',
+                    },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!response.ok) {
+                    const body = await response.text().catch(() => '');
+                    throw new Error(`API error ${response.status}: ${body}`);
+                }
+
+                const json = await response.json().catch(() => ({}));
+                return json;
+            },
+            MAX_RETRIES,
+            RETRY_BASE_DELAY_MS
+        );
+
+        log('INFO', 'Interview prep sent successfully', { jobId: payload.jobId });
+        return { success: true, response: result };
+
+    } catch (err) {
+        log('ERROR', 'Failed to send interview prep to API after retries', {
+            jobId: payload.jobId,
             error: err.message,
         });
         return { success: false, error: err.message };
