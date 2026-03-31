@@ -99,6 +99,98 @@ class PdfService:
                 if text in BULLET_CHARS:
                     elem.decompose()
 
+            # Step 11: Horizontal Header/Date Layout: Move dates to the right side of headers
+            # Common patterns: h3/h4 followed by a date/year p or span
+            processed_nodes = set()
+            for header in soup.find_all(['h3', 'h4', 'p']):
+                if id(header) in processed_nodes: continue
+                
+                # Only process headers that have a sibling
+                next_elem = header.find_next_sibling()
+                if not next_elem: continue
+                if id(next_elem) in processed_nodes: continue
+                
+                # Look for date-like text or organization name in the next sibling
+                # Regex matches years (2024), "Present", months (Jan, May), etc., or certification prefixes (-- , | , —)
+                # Word boundaries (\b) prevent matching "Mar" inside "Marketing"
+                date_text = next_elem.get_text(strip=True)
+                is_date = re.search(r'(\b(19|20)\d{2}\b|\bPresent\b|\bOngoing\b|\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b)', date_text, re.I)
+                # Support em-dash (—), hyphen-space (- ), and double-hyphen (--)
+                is_cert_org = date_text.startswith('--') or date_text.startswith('|') or date_text.startswith('—') or date_text.startswith('- ')
+                
+                if (is_date or is_cert_org) and len(date_text) < 50:
+                    # Clear any existing styling
+                    header['style'] = 'display: inline; margin: 0; padding: 0;'
+                    
+                    # Style the date to be floated to the right on the same line
+                    next_elem['style'] = 'display: block; float: right; margin: 0; padding: 0; font-weight: bold; text-align: right;'
+                    
+                    # Create a wrapper div to contain them and clear the float after
+                    wrapper = soup.new_tag('div')
+                    wrapper['style'] = 'width: 100%; margin-bottom: 2px; clear: both; display: block; break-inside: avoid;'
+                    
+                    header.insert_before(wrapper)
+                    # For float: right to work correctly, the floated element must come FIRST in the DOM
+                    wrapper.append(next_elem)
+                    wrapper.append(header)
+                    
+                    processed_nodes.add(id(header))
+                    processed_nodes.add(id(next_elem))
+                    
+                    log_msg = f"Merged header '{header.get_text(strip=True)[:20]}...' with date '{date_text}' on same line"
+                    logger.info(log_msg)
+
+            # Step 12: Header Redesign: Center Name/Summary and Merge Contact Info
+            h1 = soup.find('h1')
+            if h1:
+                h1['style'] = 'text-align: center; margin: 0 auto 1px auto; width: 100%;'
+                
+                # Center the summary/title paragraph immediately after name
+                summary = h1.find_next(['p', 'div'])
+                if summary:
+                    summary['style'] = 'text-align: center; margin: 0 auto 3px auto; width: 100%; font-style: italic; font-size: 10.5px;'
+                
+                # Collect and merge contact info
+                contact_parts = []
+                # Scan next few elements for contact patterns
+                curr = summary.find_next_sibling() if summary else h1.find_next_sibling()
+                to_delete = []
+                
+                # Check up to 10 elements for contact info (Phone, Email, LinkedIn)
+                for _ in range(10):
+                    if not curr: break
+                    text = curr.get_text(strip=True)
+                    # Smart Contact Splitting: If multiple contact points are in a single element ("glued" together)
+                    # or if they are separate elements, we find and extract them individually.
+                    # This regex finds: phone numbers (10+ digits), email addresses, and URLs (starting with http or linkedin.com)
+                    matches = re.findall(r'(\+?\d[\d\-\s]{8,}|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|(?:https?://|www\.|linkedin\.com/)[^\s]+)', text, re.I)
+                    if matches:
+                        # Clean each match and add to parts list
+                        for m in matches:
+                            clean_m = m.strip().strip(',').strip(';')
+                            if clean_m and clean_m not in contact_parts:
+                                contact_parts.append(clean_m)
+                        to_delete.append(curr)
+                    curr = curr.find_next_sibling()
+                
+                if contact_parts:
+                    # Remove original contact elements
+                    for node in to_delete:
+                        node.decompose()
+                    
+                    # Create a single merged contact line
+                    contact_line = soup.new_tag('div')
+                    contact_line['style'] = 'text-align: center; margin: 0 auto 6px auto; width: 100%; font-size: 10px; font-weight: bold; white-space: pre-wrap; font-family: Courier, Courier New, monospace;'
+                    
+                    # Joining with WIDER spacing for ATS parsing and readability
+                    separator = "     •     "
+                    contact_line.string = separator.join(contact_parts)
+                    
+                    if summary:
+                        summary.insert_after(contact_line)
+                    else:
+                        h1.insert_after(contact_line)
+
             return str(soup)
         except Exception as e:
             logger.warning(f"Failed to preprocess HTML: {e}. Using original HTML.")
@@ -120,30 +212,24 @@ class PdfService:
 <head>
 <meta charset="UTF-8">
 <style>
-  @page {{ margin: 12mm 12mm; size: A4; }}
-
+  @page {{ margin: 8mm 10mm; size: A4; }}
   * {{ box-sizing: border-box; max-width: 100%; word-wrap: break-word; overflow-wrap: break-word; }}
-
-  body {{ font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111; margin: 0; padding: 0; line-height: 1.5; }}
-
+  body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10.5px; color: #111; margin: 0; padding: 0; line-height: 1.25; }}
   div, section, header, article, span {{ display: block; width: 100%; height: auto; min-height: 0; padding: 0; margin: 0; }}
-
-  h1 {{ font-size: 22px; font-weight: bold; margin: 0 0 5px 0; letter-spacing: 0.5px; }}
-  h2 {{ font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1.5px solid #111; margin: 14px 0 6px 0; padding-bottom: 2px; }}
-  h3 {{ font-size: 11.5px; font-weight: bold; margin: 9px 0 2px 0; }}
-  h4 {{ font-size: 11px; font-weight: bold; margin: 7px 0 2px 0; }}
-
-  p {{ margin: 2px 0 3px 0; font-size: 11px; }}
-
-  ul, ol {{ display: block; margin: 3px 0 6px 0; padding-left: 18px; }}
+  h1 {{ font-size: 20px; font-weight: bold; margin: 0 auto 1px auto; letter-spacing: 0.5px; text-align: center; }}
+  h2 {{ font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1.5px solid #111; margin: 6px 0 3px 0; padding-bottom: 1px; }}
+  h3 {{ font-size: 11px; font-weight: bold; margin: 5px 0 1px 0; }}
+  h4 {{ font-size: 10.5px; font-weight: bold; margin: 4px 0 1px 0; }}
+  p {{ margin: 0.5px 0 1px 0; font-size: 10.5px; }}
+  ul, ol {{ display: block; margin: 1px 0 2px 0; padding-left: 14px; }}
   ul {{ list-style-type: disc; }}
   ol {{ list-style-type: decimal; }}
-  li {{ display: list-item; margin-bottom: 3px; font-size: 11px; line-height: 1.5; }}
-
+  li {{ display: list-item; margin-bottom: 1px; font-size: 10.5px; line-height: 1.25; }}
   a {{ color: #111; text-decoration: none; }}
-
-  article {{ margin-bottom: 8px; }}
-  section {{ margin-bottom: 6px; }}
+  article {{ margin-bottom: 3px; break-inside: avoid; }}
+  section {{ margin-bottom: 2px; break-inside: avoid; }}
+  /* Flex support for Header-Date alignment */
+  .flex-container {{ display: flex; justify-content: space-between; align-items: baseline; width: 100%; }}
 </style>
 </head>
 <body>
