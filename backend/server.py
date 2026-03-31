@@ -152,6 +152,65 @@ def _update_job_with_draft_metadata(job_id, draft_metadata):
         logger.error(f"Error saving draft metadata for {job_id}: {e}")
         return False
 
+def refresh_rag_token():
+    """
+    Calls the login API to get a new JWT token for the RAG service.
+    Updates the environment variable and persists it to the .env file.
+    """
+    try:
+        login_url = "https://be-ext.algofolks.com/api/auth/login"
+        email = os.getenv('RAG_LOGIN_EMAIL', 'test@gmail.com')
+        password = os.getenv('RAG_LOGIN_PASSWORD', 'Test@123')
+        
+        logger.info(f"Refreshing RAG token for {email}...")
+        
+        response = http_requests.post(
+            login_url, 
+            json={"email": email, "password": password},
+            timeout=15
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            new_token = data.get('token')
+            if not new_token:
+                logger.error("Login successful but no token found in response")
+                return None
+            
+            # Update current process environment
+            os.environ['RAG_AUTH_TOKEN'] = new_token
+            
+            # Persist to .env file
+            # Try to find BASE_DIR from the module or use current directory
+            base_dir = globals().get('BASE_DIR', os.path.dirname(os.path.abspath(__file__)))
+            env_path = os.path.join(base_dir, '.env')
+            if os.path.exists(env_path):
+                try:
+                    with open(env_path, 'r') as f:
+                        lines = f.readlines()
+                    
+                    with open(env_path, 'w') as f:
+                        token_updated = False
+                        for line in lines:
+                            if line.startswith('RAG_AUTH_TOKEN='):
+                                f.write(f"RAG_AUTH_TOKEN={new_token}\n")
+                                token_updated = True
+                            else:
+                                f.write(line)
+                        if not token_updated:
+                            f.write(f"RAG_AUTH_TOKEN={new_token}\n")
+                    logger.info("Successfully persisted new RAG token to .env")
+                except Exception as e:
+                    logger.error(f"Failed to update .env with new token: {e}")
+                    
+            return new_token
+        else:
+            logger.error(f"RAG login failed: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        logger.error(f"Error refreshing RAG token: {e}")
+        return None
+
 @app.route('/', methods=['GET'])
 def health_check():
     return jsonify({
@@ -324,61 +383,67 @@ def save_interview_prep():
         doc.build(story)
         
         try:
-            # Upload to RAG endpoint
+            # Upload to RAG endpoint (with retry logic for expired tokens)
             rag_url = os.getenv('RAG_API_URL', 'https://be-ext.algofolks.com/api/rag/upload')
-            auth_token = os.getenv('RAG_AUTH_TOKEN', '')
             
-            logger.info(f"Uploading PDF to RAG: {temp_file.name}")
-            logger.info(f"Auth token present: {bool(auth_token)}")
-            
-            # Create descriptive filename with position and company
-            import re
-            # Clean position and company names for filename (remove special chars)
-            clean_position = re.sub(r'[^\w\s-]', '', position).strip().replace(' ', '_')
-            clean_company = re.sub(r'[^\w\s-]', '', company).strip().replace(' ', '_')
-            filename = f'{clean_position}_at_{clean_company}_Interview_Prep.pdf'
-            
-            with open(temp_file.name, 'rb') as f:
-                files = {'document': (filename, f, 'application/pdf')}
+            # Loop for retry (max 2 attempts)
+            for attempt in range(1, 3):
+                auth_token = os.getenv('RAG_AUTH_TOKEN', '')
+                logger.info(f"RAG Upload attempt {attempt} (Token present: {bool(auth_token)})")
                 
-                # Add metadata for better chunk filtering and search
-                metadata = {
-                    'jobId': job_id,
-                    'position': position,
-                    'company': company,
-                    'position_company': f'{position}_{company}',
-                    'type': 'interview_prep',
-                    'uploadedAt': data.get('scrapedAt', '')
-                }
+                # Create descriptive filename with position and company
+                import re
+                clean_position = re.sub(r'[^\w\s-]', '', position).strip().replace(' ', '_')
+                clean_company = re.sub(r'[^\w\s-]', '', company).strip().replace(' ', '_')
+                filename = f'{clean_position}_at_{clean_company}_Interview_Prep.pdf'
                 
-                form_data = {
-                    'metadata': json.dumps(metadata)
-                }
-                
-                headers = {}
-                if auth_token:
-                    headers['Authorization'] = f'Bearer {auth_token}'
-                
-                response = http_requests.post(rag_url, files=files, data=form_data, headers=headers, timeout=30)
-                
-                if response.status_code in [200, 201]:
-                    logger.info(f"✅ Interview prep data uploaded to Vector DB for job: {job_id}")
-                    questions_count = len(scraped_data.get('questions', {}).get('questions', []))
+                with open(temp_file.name, 'rb') as f:
+                    files = {'document': (filename, f, 'application/pdf')}
                     
-                    return jsonify({
-                        "success": True,
-                        "message": "Interview prep data uploaded to Vector DB successfully",
-                        "jobId": job_id,
-                        "questionsCount": questions_count,
-                        "ragResponse": response.json()
-                    }), 200
-                else:
-                    logger.error(f"RAG upload failed: {response.status_code} - {response.text}")
-                    return jsonify({
-                        "success": False,
-                        "error": f"RAG upload failed: {response.status_code}",
-                        "details": response.text
-                    }), 500
+                    metadata = {
+                        'jobId': job_id,
+                        'position': position,
+                        'company': company,
+                        'position_company': f'{position}_{company}',
+                        'type': 'interview_prep',
+                        'uploadedAt': data.get('scrapedAt', '')
+                    }
+                    
+                    form_data = {'metadata': json.dumps(metadata)}
+                    headers = {}
+                    if auth_token:
+                        headers['Authorization'] = f'Bearer {auth_token}'
+                    
+                    response = http_requests.post(rag_url, files=files, data=form_data, headers=headers, timeout=30)
+                    
+                    if response.status_code in [200, 201]:
+                        logger.info(f"✅ Interview prep data uploaded to Vector DB (Attempt {attempt})")
+                        questions_count = len(scraped_data.get('questions', {}).get('questions', []))
+                        return jsonify({
+                            "success": True,
+                            "message": "Interview prep data uploaded to Vector DB successfully",
+                            "jobId": job_id,
+                            "questionsCount": questions_count,
+                            "ragResponse": response.json()
+                        }), 200
+                    
+                    elif response.status_code == 401 and attempt == 1:
+                        logger.warning("RAG token expired (401). Refreshing...")
+                        new_token = refresh_rag_token()
+                        if not new_token:
+                            logger.error("Failed to refresh RAG token. Cannot retry.")
+                            break # Don't retry if refresh failed
+                        logger.info("Token refreshed successfully. Retrying upload...")
+                        # Continue to next attempt loop
+                    
+                    else:
+                        logger.error(f"RAG upload failed (Attempt {attempt}): {response.status_code} - {response.text}")
+                        if attempt == 2 or response.status_code != 401:
+                            return jsonify({
+                                "success": False,
+                                "error": f"RAG upload failed: {response.status_code}",
+                                "details": response.text
+                            }), 500
         finally:
             # Clean up temp file
             os.unlink(temp_file.name)

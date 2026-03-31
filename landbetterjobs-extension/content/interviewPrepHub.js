@@ -24,6 +24,7 @@ const INTERVIEW_PREP_SELECTORS = {
 };
 
 const DEBUG = true;
+const MAX_WAIT_TIME = 200000; // 200 seconds per user feedback
 
 function log(level, message, data = null) {
     const timestamp = new Date().toISOString();
@@ -569,15 +570,15 @@ async function handleFillInterviewPrep(job) {
             // CREATION FLOW (PRESERVED BUT DISABLED)
             // ═══════════════════════════════════════════════════════════════════════
             
-            // 0. Wait for correct URL (no timeout - wait indefinitely)
+            // 0. Wait for correct URL (wait up to MAX_WAIT_TIME)
             log('INFO', 'Waiting for /interview-preparation-hub URL...');
             log('INFO', `Current URL: ${window.location.href}`);
-            await waitForCondition(() => window.location.href.includes('/interview-preparation-hub'), 0);
+            await waitForCondition(() => window.location.href.includes('/interview-preparation-hub'), MAX_WAIT_TIME);
             log('INFO', 'URL confirmed. Waiting for page to render...');
             await sleep(3000); // Give page more time to fully render
 
-            // 1. Find and click the "+ Prepare" button (no timeout - wait indefinitely)
-            log('INFO', 'Looking for "+ Prepare" button (will wait indefinitely)...');
+            // 1. Find and click the "+ Prepare" button (wait up to MAX_WAIT_TIME)
+            log('INFO', 'Looking for "+ Prepare" button (will wait up to MAX_WAIT_TIME)...');
             let prepareBtn = null;
             let attemptCount = 0;
             
@@ -597,7 +598,7 @@ async function handleFillInterviewPrep(job) {
                     return text.includes('Prepare') || text.includes('+ Prepare') || text.toLowerCase().includes('prepare');
                 });
                 return prepareBtn !== null;
-            }, 0); // 0 = wait indefinitely
+            }, MAX_WAIT_TIME); // 200s timeout
 
             if (!prepareBtn) {
                 throw new Error('Could not find "+ Prepare" button');
@@ -607,11 +608,11 @@ async function handleFillInterviewPrep(job) {
             simulateRealClick(prepareBtn);
             await sleep(1500);
 
-            // 2. Wait for modal form to appear (no timeout - wait indefinitely)
-            log('INFO', 'Waiting for modal form (will wait indefinitely)...');
-            const modal = await waitForElement(INTERVIEW_PREP_SELECTORS.MODAL_FORM, document, 0);
+            // 2. Wait for modal form to appear (wait up to MAX_WAIT_TIME)
+            log('INFO', 'Waiting for modal form (will wait up to MAX_WAIT_TIME)...');
+            const modal = await waitForElement(INTERVIEW_PREP_SELECTORS.MODAL_FORM, document, MAX_WAIT_TIME);
             if (!modal) {
-                throw new Error('Modal form did not appear after clicking Prepare button');
+                throw new Error('Modal form did not appear after clicking Prepare button within timeout');
             }
             log('INFO', 'Modal form appeared!');
 
@@ -711,7 +712,7 @@ async function handleFillInterviewPrep(job) {
             await sleep(2000);
 
             // 7. Wait for URL to change (page navigates to /interview-preparation-hub/{UUID})
-            log('INFO', 'Waiting for page navigation after form submission (will wait indefinitely)...');
+            log('INFO', 'Waiting for page navigation after form submission (wait up to MAX_WAIT_TIME)...');
             await waitForCondition(() => {
                 const newUrl = window.location.href;
                 // Check if URL has changed and contains a UUID pattern
@@ -720,14 +721,14 @@ async function handleFillInterviewPrep(job) {
                     log('INFO', `Page navigated to: ${newUrl}`);
                 }
                 return hasNavigated;
-            }, 0); // 0 = wait indefinitely
+            }, MAX_WAIT_TIME); // 200s timeout
 
             log('INFO', 'Form submitted and page navigated. Waiting for AI content generation...');
             
             // 8. Wait for AI-generated content to load (Skills, Questions, Insights, etc.) - no timeout
             await sleep(3000); // Initial wait for navigation/page load
             
-            log('INFO', 'Waiting for interview prep content to generate (will wait indefinitely)...');
+            log('INFO', 'Waiting for interview prep content to generate (wait up to MAX_WAIT_TIME)...');
             let attempts = 0;
             
             await waitForCondition(() => {
@@ -754,7 +755,7 @@ async function handleFillInterviewPrep(job) {
                 }
                 
                 return contentLoaded;
-            }, 0); // 0 = wait indefinitely
+            }, MAX_WAIT_TIME); // 200s timeout
             
             // Additional wait to ensure all content is fully rendered
             log('INFO', 'Waiting additional 5s for complete content rendering...');
@@ -787,7 +788,7 @@ async function handleFillInterviewPrep(job) {
             await waitForCondition(() => {
                 const rows = document.querySelectorAll('table tbody tr, [role="table"] [role="row"]');
                 return rows.length > 0;
-            }, 0);
+            }, MAX_WAIT_TIME);
             
             log('INFO', 'Table loaded successfully');
             await sleep(1000);
@@ -879,7 +880,7 @@ async function handleFillInterviewPrep(job) {
             simulateRealClick(viewButton);
             
             // Wait for navigation to detail page
-            log('INFO', 'Waiting for navigation to interview prep detail page...');
+            log('INFO', 'Waiting for navigation to interview prep detail page (wait up to MAX_WAIT_TIME)...');
             await waitForCondition(() => {
                 const newUrl = window.location.href;
                 const hasNavigated = newUrl !== currentUrl && newUrl.includes('/interview-preparation-hub/');
@@ -887,7 +888,7 @@ async function handleFillInterviewPrep(job) {
                     log('INFO', `Navigated to: ${newUrl}`);
                 }
                 return hasNavigated;
-            }, 0);
+            }, MAX_WAIT_TIME);
             
             // Wait for page to load
             log('INFO', 'Waiting for interview prep content to load...');
@@ -897,7 +898,7 @@ async function handleFillInterviewPrep(job) {
             await waitForCondition(() => {
                 const content = document.body.textContent;
                 return content.length > 1000; // Ensure substantial content is loaded
-            }, 0);
+            }, MAX_WAIT_TIME);
         }
         
         // ═══════════════════════════════════════════════════════════════════════
