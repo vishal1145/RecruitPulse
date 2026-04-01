@@ -159,11 +159,12 @@ class PdfService:
                 # Check up to 10 elements for contact info (Phone, Email, LinkedIn)
                 for _ in range(10):
                     if not curr: break
-                    text = curr.get_text(strip=True)
+                    text = curr.get_text(separator=' ', strip=True)
                     # Smart Contact Splitting: If multiple contact points are in a single element ("glued" together)
                     # or if they are separate elements, we find and extract them individually.
                     # This regex finds: phone numbers (10+ digits), email addresses, and URLs (starting with http or linkedin.com)
-                    matches = re.findall(r'(\+?\d[\d\-\s]{8,}|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|(?:https?://|www\.|linkedin\.com/)[^\s]+)', text, re.I)
+                    # This regex prioritizes URLs and uses boundaries to prevent greedy email matching
+                    matches = re.findall(r'((?:https?://|www\.|linkedin\.com/)[^\s]+|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}|\+?\d[\d\-\s]{8,})', text, re.I)
                     if matches:
                         # Clean each match and add to parts list
                         for m in matches:
@@ -183,8 +184,9 @@ class PdfService:
                     contact_line['style'] = 'text-align: center; margin: 0 auto 6px auto; width: 100%; font-size: 10px; font-weight: bold; white-space: pre-wrap; font-family: Courier, Courier New, monospace;'
                     
                     # Joining with WIDER spacing for ATS parsing and readability
-                    separator = "     •     "
-                    contact_line.string = separator.join(contact_parts)
+                    # Joining with consistent spacing and a leading bullet for a professional appearance
+                    separator = "    •    "
+                    contact_line.string = "•    " + separator.join(contact_parts)
                     
                     if summary:
                         summary.insert_after(contact_line)
