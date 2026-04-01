@@ -120,19 +120,17 @@ class PdfService:
                 
                 if (is_date or is_cert_org) and len(date_text) < 50:
                     # Clear any existing styling
-                    header['style'] = 'display: inline; margin: 0; padding: 0;'
+                    # Style the date/org to be bold and right-aligned
+                    next_elem['style'] = 'margin: 0; padding: 0; font-weight: bold; text-align: right; font-size: 9.5px;'
                     
-                    # Style the date to be floated to the right on the same line
-                    next_elem['style'] = 'display: block; float: right; margin: 0; padding: 0; font-weight: bold; text-align: right;'
-                    
-                    # Create a wrapper div to contain them and clear the float after
+                    # Create a wrapper div using Flexbox for robust horizontal alignment
                     wrapper = soup.new_tag('div')
-                    wrapper['style'] = 'width: 100%; margin-bottom: 2px; clear: both; display: block; break-inside: avoid;'
+                    wrapper['style'] = 'display: flex; justify-content: space-between; align-items: baseline; width: 100%; margin-bottom: 1px; break-inside: avoid;'
                     
                     header.insert_before(wrapper)
-                    # For float: right to work correctly, the floated element must come FIRST in the DOM
-                    wrapper.append(next_elem)
+                    # For Flexbox, the natural order (Header, then Date) works best
                     wrapper.append(header)
+                    wrapper.append(next_elem)
                     
                     processed_nodes.add(id(header))
                     processed_nodes.add(id(next_elem))
@@ -181,7 +179,7 @@ class PdfService:
                     
                     # Create a single merged contact line
                     contact_line = soup.new_tag('div')
-                    contact_line['style'] = 'text-align: center; margin: 0 auto 6px auto; width: 100%; font-size: 10px; font-weight: bold; white-space: pre-wrap; font-family: Courier, Courier New, monospace;'
+                    contact_line['style'] = 'text-align: center; margin: 0 auto 5px auto; width: 100%; font-size: 9.5px; font-weight: bold; white-space: pre-wrap; font-family: Courier, Courier New, monospace;'
                     
                     # Joining with WIDER spacing for ATS parsing and readability
                     # Joining with consistent spacing and a leading bullet for a professional appearance
@@ -214,22 +212,22 @@ class PdfService:
 <head>
 <meta charset="UTF-8">
 <style>
-  @page {{ margin: 8mm 10mm; size: A4; }}
+  @page {{ margin: 7mm 9mm; size: A4; }}
   * {{ box-sizing: border-box; max-width: 100%; word-wrap: break-word; overflow-wrap: break-word; }}
-  body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10.5px; color: #111; margin: 0; padding: 0; line-height: 1.25; }}
+  body {{ font-family: Arial, Helvetica, sans-serif; font-size: 9.8px; color: #111; margin: 0; padding: 0; line-height: 1.22; }}
   div, section, header, article, span {{ display: block; width: 100%; height: auto; min-height: 0; padding: 0; margin: 0; }}
-  h1 {{ font-size: 20px; font-weight: bold; margin: 0 auto 1px auto; letter-spacing: 0.5px; text-align: center; }}
-  h2 {{ font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1.5px solid #111; margin: 6px 0 3px 0; padding-bottom: 1px; }}
-  h3 {{ font-size: 11px; font-weight: bold; margin: 5px 0 1px 0; }}
-  h4 {{ font-size: 10.5px; font-weight: bold; margin: 4px 0 1px 0; }}
-  p {{ margin: 0.5px 0 1px 0; font-size: 10.5px; }}
-  ul, ol {{ display: block; margin: 1px 0 2px 0; padding-left: 14px; }}
+  h1 {{ font-size: 18px; font-weight: bold; margin: 0 auto 0.5px auto; letter-spacing: 0.5px; text-align: center; }}
+  h2 {{ font-size: 12.5px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1.2px solid #111; margin: 4px 0 2px 0; padding-bottom: 1px; }}
+  h3 {{ font-size: 10.5px; font-weight: bold; margin: 4px 0 1px 0; }}
+  h4 {{ font-size: 9.8px; font-weight: bold; margin: 3px 0 1px 0; }}
+  p {{ margin: 0.5px 0 1px 0; font-size: 9.8px; }}
+  ul, ol {{ display: block; margin: 1px 0 2px 0; padding-left: 12px; }}
   ul {{ list-style-type: disc; }}
   ol {{ list-style-type: decimal; }}
-  li {{ display: list-item; margin-bottom: 1px; font-size: 10.5px; line-height: 1.25; }}
+  li {{ display: list-item; margin-bottom: 0.8px; font-size: 9.8px; line-height: 1.22; }}
   a {{ color: #111; text-decoration: none; }}
-  article {{ margin-bottom: 3px; break-inside: avoid; }}
-  section {{ margin-bottom: 2px; break-inside: avoid; }}
+  article {{ margin-bottom: 2.5px; break-inside: avoid; }}
+  section {{ margin-bottom: 1px; break-inside: avoid; }}
   /* Flex support for Header-Date alignment */
   .flex-container {{ display: flex; justify-content: space-between; align-items: baseline; width: 100%; }}
 </style>
