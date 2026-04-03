@@ -8,6 +8,7 @@ export const API_BASE_URL = 'https://recruitpulse.algofolks.com';
 export const API_ENDPOINT = `${API_BASE_URL}/api/jobs`;
 export const API_INTERVIEW_PREP_ENDPOINT = `${API_BASE_URL}/api/interview-prep`;
 export const API_TEST_RESET_URL = `${API_BASE_URL}/api/test/reset-jobs`;
+export const API_LLM_CONFIG_URL = `${API_BASE_URL}/api/llm-config`;
 
 // Milliseconds to wait between processing each job
 export const JOB_DELAY_MS = 30000; // 1 minute

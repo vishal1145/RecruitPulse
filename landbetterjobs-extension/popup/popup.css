@@ -434,6 +434,42 @@ footer a:hover {
   margin-top: 4px;
 }
 
+/* ── Revealable Fields ── */
+.field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.field-header label {
+  margin-bottom: 0 !important;
+}
+
+.btn-reveal {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 2px;
+  display: flex;
+  transition: color 0.2s;
+}
+
+.btn-reveal:hover,
+.btn-reveal.active {
+  color: var(--accent);
+}
+
+.revealable-input {
+  display: none;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.revealable-input.revealed {
+  display: block;
+}
+
 /* ── Activity Log ────────────────────────────────────────────────────────── */
 .log-container {
   display: flex;

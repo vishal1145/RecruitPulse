@@ -105,6 +105,71 @@
 
   <!-- ── Settings ── -->
   <div class="settings-section">
+    <button class="settings-toggle" id="btnToggleLLM">
+      <div class="settings-toggle-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+        </svg>
+        LLM Configuration
+      </div>
+      <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </button>
+    <div class="settings-content" id="llmContent">
+      <div class="form-group sensitive-group">
+        <div class="field-header">
+          <label>Anthropic API Key</label>
+          <button type="button" class="btn-reveal" data-target="anthropicKey" title="Toggle Input">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+        <input type="password" id="anthropicKey" class="revealable-input" placeholder="sk-ant-..." />
+      </div>
+      <div class="form-group sensitive-group">
+        <div class="field-header">
+          <label>Anthropic Model</label>
+          <button type="button" class="btn-reveal" data-target="anthropicModel" title="Toggle Input">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+        <input type="password" id="anthropicModel" class="revealable-input" placeholder="claude-sonnet-4-20250514" />
+      </div>
+      <div class="form-group sensitive-group">
+        <div class="field-header">
+          <label>Groq API Key</label>
+          <button type="button" class="btn-reveal" data-target="groqKey" title="Toggle Input">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+        <input type="password" id="groqKey" class="revealable-input" placeholder="gsk_..." />
+      </div>
+      <div class="form-group sensitive-group">
+        <div class="field-header">
+          <label>Groq Model</label>
+          <button type="button" class="btn-reveal" data-target="groqModel" title="Toggle Input">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+        <input type="password" id="groqModel" class="revealable-input" placeholder="llama3-70b-8192" />
+      </div>
+      <button id="btnSaveLLMConfig" class="btn btn-primary btn-sm">Save LLM Config</button>
+    </div>
+  </div>
+
+  <div class="settings-section">
     <button class="settings-toggle" id="btnToggleSettings">
       <div class="settings-toggle-label">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

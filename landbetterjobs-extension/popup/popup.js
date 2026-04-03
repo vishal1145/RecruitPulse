@@ -1,4 +1,4 @@
-import { API_TEST_RESET_URL } from '../utils/constants.js';
+import { API_TEST_RESET_URL, API_LLM_CONFIG_URL } from '../utils/constants.js';
 
 /**
  * popup/popup.js  –  RecruitPulse Popup Controller
@@ -32,7 +32,7 @@ const statTotal = document.getElementById('statTotal');
 const statSuccess = document.getElementById('statSuccess');
 const statFailed = document.getElementById('statFailed');
 const btnToggleSettings = document.getElementById('btnToggleSettings');
-const settingsSection = document.querySelector('.settings-section');
+const settingsSection = document.getElementById('settingsContent').parentElement; // Target the correct parent for Telegram
 const btnSaveSettings = document.getElementById('btnSaveSettings');
 // Download button removed as server now handles local file saving
 const tgChatIdsInput = document.getElementById('tgChatIds');
@@ -40,6 +40,8 @@ const btnRevealToken = document.getElementById('btnRevealToken');
 const botTokenDisplay = document.getElementById('botTokenDisplay');
 const logFeed = document.getElementById('logFeed');
 const btnClearLog = document.getElementById('btnClearLog');
+
+// LLM Config refs removed - now entirely managed via .env
 
 let isRunning = false;
 
@@ -225,11 +227,27 @@ btnToggleSettings.addEventListener('click', () => {
     settingsSection.classList.toggle('open');
 });
 
+document.querySelectorAll('.btn-reveal').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-target');
+        const target = document.getElementById(targetId);
+        if (target) {
+            target.classList.toggle('revealed');
+            btn.classList.toggle('active');
+            target.type = target.classList.contains('revealed') ? 'text' : 'password';
+        }
+    });
+});
+
 if (btnRevealToken && botTokenDisplay) {
     btnRevealToken.addEventListener('click', () => {
         botTokenDisplay.style.display = botTokenDisplay.style.display === 'none' ? 'block' : 'none';
     });
 }
+
+// ── LLM Config Logic ──────────────────────────────────────────────────────────
+
+// LLM Config Logic hidden - managed via backend .env
 
 // ── On popup open: sync with background state ─────────────────────────────────
 

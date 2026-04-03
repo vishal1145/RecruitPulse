@@ -14,12 +14,13 @@ from job_email_service import JobEmailService
 from pdf_service import PdfService
 import email_pipeline
 import config
+import llm_service
 from gmail_service import GmailService
 import scheduler  # Starts APScheduler background job on import
 from db import mongodb
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -219,6 +220,88 @@ def health_check():
         "time": datetime.utcnow().isoformat(),
         "json_path": JSON_FILE_PATH
     }), 200
+
+@app.route('/api/llm-config', methods=['GET'])
+def get_llm_config():
+    """Returns current LLM settings from configuration."""
+    try:
+        return jsonify({
+            "anthropicKey": os.getenv("ANTHROPIC_API_KEY", ""),
+            "anthropicModel": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+            "groqKey": os.getenv("GROQ_API_KEY", ""),
+            "groqModel": os.getenv("GROQ_MODEL", "llama3-70b-8192")
+        }), 200
+    except Exception as e:
+        logger.error(f"Error fetching LLM config: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/llm-config', methods=['POST'])
+def update_llm_config():
+    """Updates LLM configuration in .env and reloads it."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+
+        # Map frontend keys to .env keys
+        mappings = {
+            "anthropicKey": "ANTHROPIC_API_KEY",
+            "anthropicModel": "ANTHROPIC_MODEL",
+            "groqKey": "GROQ_API_KEY",
+            "groqModel": "GROQ_MODEL"
+        }
+
+        env_path = os.path.join(BASE_DIR, '.env')
+        # Read existing .env
+        env_lines = []
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                env_lines = f.readlines()
+
+        # Update or add lines
+        new_env_content = []
+        applied_keys = set()
+
+        for line in env_lines:
+            found_mapping = False
+            for fe_key, env_key in mappings.items():
+                if line.startswith(f"{env_key}="):
+                    if fe_key in data:
+                        new_env_content.append(f"{env_key}={data[fe_key]}\n")
+                        applied_keys.add(env_key)
+                    else:
+                        new_env_content.append(line)
+                    found_mapping = True
+                    break
+            if not found_mapping:
+                new_env_content.append(line)
+
+        # Add any keys that weren't in the .env originally
+        for fe_key, env_key in mappings.items():
+            if fe_key in data and env_key not in applied_keys:
+                new_env_content.append(f"{env_key}={data[fe_key]}\n")
+
+        # Write back to .env
+        with open(env_path, 'w') as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                f.writelines(new_env_content)
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+
+        # Reload environment and refresh config module
+        load_dotenv(env_path, override=True)
+        import importlib
+        importlib.reload(config)
+        importlib.reload(email_pipeline)
+        importlib.reload(llm_service)
+
+        logger.info("LLM configuration updated and reloaded successfully.")
+        return jsonify({"success": True, "message": "Configuration updated successfully"}), 200
+
+    except Exception as e:
+        logger.error(f"Error updating LLM config: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/jobs', methods=['POST'])
 def save_job():
@@ -619,7 +702,13 @@ def generate_resume_pdf():
             # Check if email was auto-sent or requires manual review
             auto_sent = draft_metadata.get('autoSent', False)
             placeholders_found = draft_metadata.get('placeholdersFound', 0)
+            llm_ready = draft_metadata.get('llmReady', True)
+            llm_reason = draft_metadata.get('llmReason')
             
+            # Use defaultResume path if available, otherwise fallback to LBJ dynamic one
+            actual_attachment_path = draft_metadata.get('attachmentPath', pdf_path)
+            final_filename = os.path.basename(actual_attachment_path) if actual_attachment_path else filename
+
             if auto_sent:
                 # Email was automatically sent
                 telegram_lines = [
@@ -628,7 +717,7 @@ def generate_resume_pdf():
                     f"🏢 <b>Company:</b> {company}",
                     f"💼 <b>Role:</b> {title}",
                     f"📧 <b>To:</b> {job_data.get('applyEmail')}",
-                    f"📎 <b>File:</b> {filename}",
+                    f"📎 <b>File:</b> {final_filename}",
                     f"🆔 <b>Message ID:</b> {draft_metadata.get('gmailDraftId', 'N/A')}",
                     f"",
                     f"✨ <b>No placeholders detected - email sent automatically!</b>",
@@ -641,12 +730,16 @@ def generate_resume_pdf():
                     f"🏢 <b>Company:</b> {company}",
                     f"💼 <b>Role:</b> {title}",
                     f"📧 <b>To:</b> {job_data.get('applyEmail')}",
-                    f"📎 <b>File:</b> {filename}",
+                    f"📎 <b>File:</b> {final_filename}",
                     f"🆔 <b>Draft ID:</b> {draft_metadata.get('gmailDraftId', 'N/A')}",
                 ]
                 if placeholders_found > 0:
                     telegram_lines.append(f"")
                     telegram_lines.append(f"⚠️ <b>Found {placeholders_found} placeholder(s) - please review and fill them in</b>")
+                
+                if not llm_ready and llm_reason:
+                    telegram_lines.append(f"")
+                    telegram_lines.append(f"🤖 <b>LLM Review:</b> {llm_reason}")
             
             if resume_edit_url:
                 telegram_lines.append(f"\n✏️ <b>Edit Resume:</b>\n{resume_edit_url}")
@@ -679,7 +772,7 @@ def generate_resume_pdf():
                     ]
                 })
 
-            email_pipeline.send_telegram_notification(telegram_msg, pdf_path, reply_markup=reply_markup)
+            email_pipeline.send_telegram_notification(telegram_msg, actual_attachment_path, reply_markup=reply_markup)
 
             return jsonify({
                 "success": True, 
@@ -902,11 +995,48 @@ def update_draft():
                     f.write(pdf_bytes)
                 logger.info(f"Saved updated PDF ({len(pdf_bytes)} bytes) to {pdf_path}")
 
+            # ─── DEFAULT RESUME RESOLUTION ───
+            actual_attachment_path = email_pipeline.get_default_resume_path()
+            if not actual_attachment_path:
+                error_msg = "⚠️ Default resume file not found in backend directory. Email blocked. Please add defaultResume file to backend folder."
+                logger.error(error_msg)
+                
+                # Notify Telegram about the block
+                telegram_err = [
+                    f"❌ <b>Draft Update Blocked</b>",
+                    f"",
+                    f"🏢 <b>Company:</b> {job_data.get('company', 'Company')}",
+                    f"💼 <b>Role:</b> {job_data.get('title', 'Role')}",
+                    f"📧 <b>To:</b> {job_data.get('applyEmail', 'N/A')}",
+                    f"",
+                    f"🚩 <b>Error:</b> {error_msg}"
+                ]
+                email_pipeline.send_telegram_notification('\n'.join(telegram_err))
+                
+                return jsonify({"success": False, "error": "RESUME_NOT_FOUND", "message": error_msg}), 400
+            # ────────────────────────────────
+
             # 3. Create new draft with same email content + updated PDF
             gmail_service = GmailService()
             to_email = job_data.get('applyEmail')
             subject = job_data.get('emailSubject')
             body = job_data.get('emailBody')
+
+            # 3.5. Hard Body Check
+            if not body or not body.strip():
+                _update_draft_lock.pop(job_id, None)
+                return jsonify({"success": False, "error": "Email body is empty. Blocking update."}), 400
+
+            # 3.6. LLM Quality Gate & Placeholder Check
+            import llm_service
+            llm_result = llm_service.validate_email_content(subject, body)
+            llm_ready = llm_result.get("status") == "READY_TO_SEND"
+            llm_reason = llm_result.get("reason")
+            
+            from email_pipeline import detect_placeholders
+            placeholders = detect_placeholders(body)
+            
+            should_auto_send = not placeholders and llm_ready
 
             # Fetch existing draft to ensure we have the latest threadId if possible
             existing_draft = None
@@ -925,16 +1055,30 @@ def update_draft():
             # Attempt to create in existing thread
             if active_thread_id:
                 success, new_draft = gmail_service.create_draft_in_thread(
-                    to_email, subject, body, pdf_path, active_thread_id
+                    to_email, subject, body, actual_attachment_path, active_thread_id
                 )
 
             # Fallback to new draft creation if thread-based failed or no thread_id
             if not success:
                 if active_thread_id:
                     logger.info("Thread lookup failed or thread was deleted. Falling back to creating a new thread.")
-                success, new_draft = gmail_service.create_draft(
-                    to_email, subject, body, pdf_path
+                success, result = gmail_service.create_draft(
+                    to_email, subject, body, actual_attachment_path
                 )
+                new_draft = result if success else None
+
+            if success and should_auto_send:
+                # If it's ready to send, send it automatically!
+                new_draft_id = new_draft.get('id')
+                logger.info(f"Draft {new_draft_id} is READY and has no placeholders. Auto-sending...")
+                send_success = gmail_service.send_draft(new_draft_id)
+                if send_success:
+                    auto_sent = True
+                else:
+                    logger.error(f"Failed to auto-send updated draft {new_draft_id}")
+                    auto_sent = False
+            else:
+                auto_sent = False
 
             if not success:
                 logger.error(f"Failed to create new draft for job {job_id}: {new_draft}")
@@ -960,19 +1104,42 @@ def update_draft():
             company = job_data.get('company', 'Company')
             title = job_data.get('title', 'Role')
             resume_edit_url = job_data.get('resumeEditUrl', '')
+            display_filename = os.path.basename(actual_attachment_path)
 
-            telegram_lines = [
-                f"✅ <b>Draft Updated Successfully</b>",
-                f"",
-                f"🏢 <b>Company:</b> {company}",
-                f"💼 <b>Role:</b> {title}",
-                f"📧 <b>To:</b> {to_email}",
-                f"📎 <b>Updated Resume:</b> {pdf_filename}",
-                f"🆔 <b>New Draft ID:</b> {new_draft_id}",
-            ]
+            if auto_sent:
+                telegram_lines = [
+                    f"✅ <b>Email Sent Automatically (Updated)</b>",
+                    f"",
+                    f"🏢 <b>Company:</b> {company}",
+                    f"💼 <b>Role:</b> {title}",
+                    f"📧 <b>To:</b> {to_email}",
+                    f"📎 <b>Updated Resume:</b> {display_filename}",
+                    f"🆔 <b>Message ID:</b> {new_draft_id}",
+                    f"",
+                    f"✨ <b>Passes LLM quality gate - sent automatically!</b>",
+                ]
+            else:
+                telegram_lines = [
+                    f"✅ <b>Draft Updated Successfully</b>",
+                    f"",
+                    f"🏢 <b>Company:</b> {company}",
+                    f"💼 <b>Role:</b> {title}",
+                    f"📧 <b>To:</b> {to_email}",
+                    f"📎 <b>Updated Resume:</b> {display_filename}",
+                    f"🆔 <b>New Draft ID:</b> {new_draft_id}",
+                ]
+                if placeholders:
+                    telegram_lines.append(f"\n⚠️ <b>Found {len(placeholders)} placeholders</b>")
+                if not llm_ready and llm_reason:
+                    telegram_lines.append(f"\n🤖 <b>LLM Review:</b> {llm_reason}")
+
             if resume_edit_url:
                 telegram_lines.append(f"\n✏️ <b>Edit Resume:</b>\n{resume_edit_url}")
-            telegram_lines.append(f"\nReview and send from your Gmail Drafts.")
+            
+            if auto_sent:
+                telegram_lines.append(f"\nEmail was sent automatically after the update.")
+            else:
+                telegram_lines.append(f"\nReview and send from your Gmail Drafts.")
 
             telegram_msg = '\n'.join(telegram_lines)
 
@@ -1000,10 +1167,10 @@ def update_draft():
                 bot_token, _ = _get_telegram_credentials()
                 if bot_token:
                     _send_telegram_direct(bot_token, chat_id, telegram_msg,
-                                          document_path=pdf_path, reply_markup=update_markup)
+                                          document_path=actual_attachment_path, reply_markup=update_markup)
             else:
                 email_pipeline.send_telegram_notification(
-                    telegram_msg, pdf_path, reply_markup=update_markup)
+                    telegram_msg, actual_attachment_path, reply_markup=update_markup)
 
             # 8. Clear pending action
             _clear_pending_action(job_id)
@@ -1012,6 +1179,7 @@ def update_draft():
                 "success": True,
                 "newDraftId": new_draft_id,
                 "updatedPdf": pdf_filename,
+                "autoSent": auto_sent
             }), 200
 
         finally:

@@ -12,3 +12,5 @@ apscheduler
 beautifulsoup4
 pymongo
 reportlab
+anthropic
+groq

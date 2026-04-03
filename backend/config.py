@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(override=True)
 
 # SMTP Configuration
 SMTP_HOST = "smtp.gmail.com"
@@ -58,6 +58,12 @@ def get_service_account_info():
 
 # OpenAI Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Anthropic Configuration
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama3-70b-8192")
 
 # Supabase Configuration
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")

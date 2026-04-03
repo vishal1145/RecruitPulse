@@ -4,10 +4,30 @@ import os
 import re
 import config
 from gmail_service import GmailService
+import llm_service
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def get_default_resume_path():
+    """
+    Looks for a file named 'defaultResume' or 'resume' regardless of extension in backend/Resume.
+    Returns the absolute path if found, or None otherwise.
+    """
+    # Assuming backend/email_pipeline.py, so Resume/ is in the same directory
+    resume_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Resume')
+    
+    if not os.path.exists(resume_dir):
+        return None
+    
+    files = os.listdir(resume_dir)
+    # Prioritize 'defaultResume', then 'resume'
+    for target in ['defaultResume', 'resume']:
+        for filename in files:
+            if os.path.splitext(filename)[0].lower() == target.lower():
+                return os.path.join(resume_dir, filename)
+    return None
 
 def detect_placeholders(text):
     """
@@ -45,8 +65,22 @@ def send_email_with_attachment(job, pdf_path):
         logger.warning(f"No applyEmail provided for job {job.get('jobId')}. Skipping draft creation.")
         return False, {}
 
-    if not os.path.exists(pdf_path):
-        logger.error(f"PDF file not found at {pdf_path}")
+    if not body or not body.strip():
+        logger.error(f"❌ Empty email body for job {job.get('jobId')}. Blocking send.")
+        return False, {"error": "EMPTY_BODY", "message": "Email body content is missing or null."}
+
+    # FIND DEFAULT RESUME
+    attachment_path = get_default_resume_path()
+    if not attachment_path:
+        error_msg = "⚠️ Default resume file not found in backend directory. Email blocked. Please add defaultResume file to backend folder."
+        logger.error(error_msg)
+        return False, {"error": "RESUME_NOT_FOUND", "message": error_msg}
+
+    # Verify the resolved attachment path exists
+    if not os.path.exists(attachment_path):
+        # This technically shouldn't happen if get_default_resume_path() returned it, 
+        # but safety first.
+        logger.error(f"Default resume file not found at {attachment_path}")
         return False, {}
 
     try:
@@ -56,16 +90,25 @@ def send_email_with_attachment(job, pdf_path):
         logger.info(f"Scanning email body for placeholders...")
         placeholders = detect_placeholders(body)
         
+        # STEP 1.5: LLM QUALITY GATE
+        logger.info("Running LLM quality gate...")
+        llm_result = llm_service.validate_email_content(subject, body)
+        llm_ready = llm_result.get("status") == "READY_TO_SEND"
+        llm_reason = llm_result.get("reason")
+        
         if placeholders:
             logger.info(f"Found {len(placeholders)} placeholder(s) in email body: {placeholders[:3]}...")
         else:
             logger.info("No placeholders found in email body.")
         
         # STEP 2: DECISION LOGIC
-        if not placeholders:
-            # NO PLACEHOLDERS: Auto-send the email
-            logger.info(f"No placeholders detected. Creating draft and auto-sending to {to_email}...")
-            success, result = gmail_service.create_draft(to_email, subject, body, pdf_path)
+        # Should we auto-send? ONLY if NO placeholders AND LLM says READY_TO_SEND
+        should_auto_send = not placeholders and llm_ready
+
+        if should_auto_send:
+            # NO PLACEHOLDERS & READY: Auto-send the email
+            logger.info(f"Passed all checks. Creating draft and auto-sending to {to_email}...")
+            success, result = gmail_service.create_draft(to_email, subject, body, attachment_path)
             
             if not success:
                 logger.error(f"Failed to create Gmail draft: {result}")
@@ -83,7 +126,9 @@ def send_email_with_attachment(job, pdf_path):
                     'gmailDraftId': draft_id,
                     'gmailThreadId': thread_id,
                     'autoSent': True,
-                    'sentAt': None
+                    'sentAt': None,
+                    'llmReady': True,
+                    'attachmentPath': attachment_path
                 }
                 return True, metadata
             else:
@@ -91,17 +136,18 @@ def send_email_with_attachment(job, pdf_path):
                 metadata = {
                     'gmailDraftId': draft_id,
                     'gmailThreadId': thread_id,
-                    'autoSent': False
+                    'autoSent': False,
+                    'llmReady': True
                 }
                 return True, metadata
         else:
-            # PLACEHOLDERS FOUND: Create draft for manual review with highlighting
-            logger.info(f"Placeholders detected. Creating draft for manual review...")
+            # NEEDS REVIEW (either placeholders found OR LLM flagged it)
+            logger.info(f"Review required. Reason: {llm_reason if not llm_ready else 'Placeholders found'}")
             
-            # Highlight placeholders in the body
+            # Highlight placeholders if any
             highlighted_body = highlight_placeholders(body)
             
-            success, result = gmail_service.create_draft(to_email, subject, highlighted_body, pdf_path)
+            success, result = gmail_service.create_draft(to_email, subject, highlighted_body, attachment_path)
             
             if success:
                 draft_id = result.get('id')
@@ -111,7 +157,10 @@ def send_email_with_attachment(job, pdf_path):
                     'gmailDraftId': draft_id,
                     'gmailThreadId': thread_id,
                     'autoSent': False,
-                    'placeholdersFound': len(placeholders)
+                    'placeholdersFound': len(placeholders),
+                    'llmReady': llm_ready,
+                    'llmReason': llm_reason,
+                    'attachmentPath': attachment_path
                 }
                 return True, metadata
             else:
