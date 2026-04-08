@@ -26,9 +26,9 @@ def _validate_with_anthropic(subject, body):
     """
     Primary validation logic using Anthropic Claude Sonnet (Hardcoded).
     """
-    # Hardcoded for immediate stability
-    api_key = 
-    model = "claude-3-5-sonnet-20240620"
+    # Use dynamic configuration from config module
+    api_key = config.ANTHROPIC_API_KEY
+    model = config.ANTHROPIC_MODEL
 
     client = anthropic.Anthropic(api_key=api_key)
     system_prompt = get_system_prompt()
@@ -50,9 +50,9 @@ def _validate_with_groq(subject, body):
     """
     Fallback validation logic using Groq API (Hardcoded).
     """
-    # Hardcoded for immediate stability
-    api_key = 
-    model = "llama-3.1-8b-instant"
+    # Use dynamic configuration from config module
+    api_key = config.GROQ_API_KEY
+    model = config.GROQ_MODEL
 
     try:
         import requests

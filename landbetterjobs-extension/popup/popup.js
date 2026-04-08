@@ -41,7 +41,14 @@ const botTokenDisplay = document.getElementById('botTokenDisplay');
 const logFeed = document.getElementById('logFeed');
 const btnClearLog = document.getElementById('btnClearLog');
 
-// LLM Config refs removed - now entirely managed via .env
+// LLM Config refs
+const btnToggleLLM = document.getElementById('btnToggleLLM');
+const llmSection = document.getElementById('llmContent');
+const anthropicKeyInput = document.getElementById('anthropicKey');
+const anthropicModelInput = document.getElementById('anthropicModel');
+const groqKeyInput = document.getElementById('groqKey');
+const groqModelInput = document.getElementById('groqModel');
+const btnSaveLLMConfig = document.getElementById('btnSaveLLMConfig');
 
 let isRunning = false;
 
@@ -245,9 +252,58 @@ if (btnRevealToken && botTokenDisplay) {
     });
 }
 
-// ── LLM Config Logic ──────────────────────────────────────────────────────────
+async function fetchLLMConfig() {
+    try {
+        const response = await fetch(API_LLM_CONFIG_URL);
+        const data = await response.json();
+        if (data) {
+            anthropicKeyInput.value = data.anthropicKey || '';
+            anthropicModelInput.value = data.anthropicModel || '';
+            groqKeyInput.value = data.groqKey || '';
+            groqModelInput.value = data.groqModel || '';
+        }
+    } catch (err) {
+        console.error('Failed to fetch LLM config:', err);
+    }
+}
 
-// LLM Config Logic hidden - managed via backend .env
+async function saveLLMConfig() {
+    const config = {
+        anthropicKey: anthropicKeyInput.value.trim(),
+        anthropicModel: anthropicModelInput.value.trim(),
+        groqKey: groqKeyInput.value.trim(),
+        groqModel: groqModelInput.value.trim()
+    };
+
+    if (!config.anthropicKey && !config.groqKey) {
+        appendLog('⚠️ Please provide at least one API key.', 'warn');
+        return;
+    }
+
+    try {
+        appendLog('💾 Saving LLM configuration...', 'info');
+        const response = await fetch(API_LLM_CONFIG_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            appendLog('✅ LLM configuration saved and backend reloaded.', 'success');
+        } else {
+            appendLog('❌ Failed to save LLM config: ' + (result.error || 'Unknown error'), 'error');
+        }
+    } catch (err) {
+        appendLog('❌ Request failed: ' + err.message, 'error');
+    }
+}
+
+btnToggleLLM.addEventListener('click', () => {
+    llmSection.parentElement.classList.toggle('open');
+});
+
+btnSaveLLMConfig.addEventListener('click', saveLLMConfig);
 
 // ── On popup open: sync with background state ─────────────────────────────────
 
@@ -259,6 +315,8 @@ chrome.runtime.sendMessage({ type: MSG.GET_STATUS }, (response) => {
         appendLog('⚙️ Agent is currently running…', 'info');
     }
 });
+
+fetchLLMConfig();
 
 chrome.storage.local.get(['recruitpulse_stats', 'telegram_config', 'automationGapMinutes', 'automationEnabled'], (result) => {
     const stats = result['recruitpulse_stats'];
