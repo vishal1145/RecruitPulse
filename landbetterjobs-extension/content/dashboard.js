@@ -1012,6 +1012,10 @@ async function extractFromPopup(popup) {
         if (externalLink) viewFullPostUrl = externalLink.href;
     }
 
+    if (!viewFullPostUrl) {
+        log('WARN', 'Could not find "View Full Post" URL in popup after all attempts');
+    }
+
     return {
         title: title || 'Unknown Title',
         company: company || 'Confidential',

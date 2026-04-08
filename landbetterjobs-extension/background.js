@@ -26,6 +26,10 @@ import { sendJobToAPI, sendInterviewPrepToAPI } from './utils/api.js';
 // and jump directly to Phase 3 (Interview Preparation Hub)
 const DEV_MODE_INTERVIEW_PREP_ONLY = false; // Change to false for normal operation
 
+// Set to true to skip Phase 1 (Dashboard Jobs) and Phase 3 (Interview Prep)
+// and jump directly to Phase 2 (Resume Builder)
+const DEV_MODE_RESUME_BUILDER_ONLY = false; // Change to false for normal operation
+
 // ─── State ─────────────────────────────────────────────────────────────────
 
 let queue = [];   // Array of raw job objects collected from dashboard
@@ -159,17 +163,17 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         // No action needed, just keeps the service worker warm
         return;
     }
-    
+
     if (alarm.name === 'agentAutomation') {
         const now = new Date().toISOString();
         log('INFO', `⏰ Automation alarm triggered at ${now}. Running agent...`);
-        
+
         // Track execution
-        await chrome.storage.local.set({ 
+        await chrome.storage.local.set({
             lastAlarmExecution: now,
-            lastAlarmScheduledTime: alarm.scheduledTime 
+            lastAlarmScheduledTime: alarm.scheduledTime
         });
-        
+
         // Wrap in try/catch to prevent silent failures
         try {
             await runAgent();
@@ -186,7 +190,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
             }
         }
     }
-    
+
     if (alarm.name === 'pendingActionPoll') {
         log('INFO', '🔍 Pending action poll alarm triggered.');
         pollPendingActions();
@@ -195,13 +199,13 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 chrome.runtime.onStartup.addListener(async () => {
     log('INFO', '🔄 Chrome startup detected - verifying alarms');
-    
+
     const data = await chrome.storage.local.get([STORAGE.AUTOMATION_ENABLED, STORAGE.AUTOMATION_GAP]);
     if (!data[STORAGE.AUTOMATION_ENABLED] || !data[STORAGE.AUTOMATION_GAP]) {
         log('INFO', 'Automation disabled, skipping alarm check');
         return;
     }
-    
+
     // Check if automation alarm still exists
     const existingAlarm = await chrome.alarms.get('agentAutomation');
     if (!existingAlarm) {
@@ -211,7 +215,7 @@ chrome.runtime.onStartup.addListener(async () => {
         const nextRun = new Date(existingAlarm.scheduledTime).toLocaleString();
         log('INFO', `✅ Automation alarm verified. Next run: ${nextRun}`);
     }
-    
+
     // Verify keepalive alarm
     const keepaliveAlarm = await chrome.alarms.get('agentAutomationKeepalive');
     if (!keepaliveAlarm && data[STORAGE.AUTOMATION_GAP]) {
@@ -258,7 +262,7 @@ async function setupAutomation(gapMinutes, force = false) {
         delayInMinutes: gapMinutes,
         periodInMinutes: gapMinutes
     });
-    
+
     // Create keepalive alarm that fires 2 minutes before main alarm
     // This pre-warms the service worker so it's alive when the real alarm fires
     const keepaliveDelay = Math.max(gapMinutes - 2, 0.1); // At least 0.1 min before
@@ -266,11 +270,11 @@ async function setupAutomation(gapMinutes, force = false) {
         delayInMinutes: keepaliveDelay,
         periodInMinutes: gapMinutes
     });
-    
+
     // Verify alarms were created
     const verifyAlarm = await chrome.alarms.get('agentAutomation');
     const verifyKeepalive = await chrome.alarms.get('agentAutomationKeepalive');
-    
+
     if (verifyAlarm && verifyKeepalive) {
         const nextRun = new Date(verifyAlarm.scheduledTime).toLocaleString();
         const keepaliveRun = new Date(verifyKeepalive.scheduledTime).toLocaleString();
@@ -278,9 +282,9 @@ async function setupAutomation(gapMinutes, force = false) {
         log('INFO', `   🔥 Keepalive: ${keepaliveRun}`);
         log('INFO', `   ⏰ Main alarm: ${nextRun}`);
         log('INFO', `   📊 Interval: ${gapMinutes} minutes`);
-        
+
         // Store last setup time for debugging
-        await chrome.storage.local.set({ 
+        await chrome.storage.local.set({
             lastAlarmSetup: new Date().toISOString(),
             nextScheduledRun: verifyAlarm.scheduledTime,
             automationGapMinutes: gapMinutes
@@ -294,30 +298,30 @@ async function setupAutomation(gapMinutes, force = false) {
 
 async function rescheduleAutomation(gapMinutes) {
     log('INFO', `🔄 Rescheduling automation for ${gapMinutes} minutes from now...`);
-    
+
     // Clear existing alarms
     await chrome.alarms.clear('agentAutomation');
     await chrome.alarms.clear('agentAutomationKeepalive');
-    
+
     // Recreate with fresh timing
     chrome.alarms.create('agentAutomation', {
         delayInMinutes: gapMinutes,
         periodInMinutes: gapMinutes
     });
-    
+
     const keepaliveDelay = Math.max(gapMinutes - 2, 0.1);
     chrome.alarms.create('agentAutomationKeepalive', {
         delayInMinutes: keepaliveDelay,
         periodInMinutes: gapMinutes
     });
-    
+
     const verifyAlarm = await chrome.alarms.get('agentAutomation');
     if (verifyAlarm) {
         const nextRun = new Date(verifyAlarm.scheduledTime).toLocaleString();
         log('INFO', `✅ Rescheduled successfully. Next run: ${nextRun}`);
-        await chrome.storage.local.set({ 
+        await chrome.storage.local.set({
             lastReschedule: new Date().toISOString(),
-            nextScheduledRun: verifyAlarm.scheduledTime 
+            nextScheduledRun: verifyAlarm.scheduledTime
         });
     } else {
         log('ERROR', '❌ Reschedule failed!');
@@ -330,7 +334,7 @@ async function rescheduleAutomation(gapMinutes) {
 chrome.storage.local.get([STORAGE.AUTOMATION_ENABLED, STORAGE.AUTOMATION_GAP], async (data) => {
     if (data[STORAGE.AUTOMATION_ENABLED] && data[STORAGE.AUTOMATION_GAP]) {
         log('INFO', '🚀 Service worker initialized - checking automation state');
-        
+
         // Verify alarm exists, recreate if missing
         const existingAlarm = await chrome.alarms.get('agentAutomation');
         if (!existingAlarm) {
@@ -421,19 +425,34 @@ async function runDynamicQueue() {
         log('INFO', '🔧 DEV MODE: Skipping Phase 1 (Dashboard Jobs) and Phase 2 (Resume Builder)');
         broadcastStatus('🔧 DEV MODE: Jumping directly to Phase 3 (Interview Preparation Hub)…', 'info');
         await sleep(1000);
-        
+
         // --- Phase 3: Interview Preparation Hub ---
         broadcastStatus('🚀 Starting Phase 3: Interview Preparation Hub…', 'info');
         await sleep(2000);
         await runInterviewPrepHubQueue();
-        
+
+        finishQueue();
+        return;
+    }
+
+    // DEV_MODE_RESUME_BUILDER_ONLY: Skip Phase 1 and Phase 3
+    if (DEV_MODE_RESUME_BUILDER_ONLY) {
+        log('INFO', '🔧 DEV MODE: Skipping Phase 1 (Dashboard Jobs) and Phase 3 (Interview Prep Hub)');
+        broadcastStatus('🔧 DEV MODE: Jumping directly to Phase 2 (Resume Builder)…', 'info');
+        await sleep(1000);
+
+        // --- Phase 2: Resume Builder ---
+        broadcastStatus('🚀 Starting Phase 2: JD Resume Builder…', 'info');
+        await sleep(2000);
+        await runResumeBuilderQueue();
+
         finishQueue();
         return;
     }
 
     // NORMAL MODE: Run all phases
     let iteration = 0;
-    
+
     while (true) {
         if (stopRequested) {
             broadcastStatus('⏹ Processing stopped by user.', 'warn');
@@ -451,7 +470,7 @@ async function runDynamicQueue() {
         } catch (err) {
             log('ERROR', 'Failed to fetch next job', err);
             broadcastStatus(`❌ ${jobTag} Error fetching job: ${err.message}`, 'error');
-            break; 
+            break;
         }
 
         if (!nextJobData || !nextJobData.job) {
@@ -470,15 +489,25 @@ async function runDynamicQueue() {
             processedCount++;
             broadcastStatus(`✅ ${jobTag} Done: "${rawJob.title}"`, 'success');
         } catch (err) {
-            failedCount++;
-            await updateStats('failed');
-            log('ERROR', `${jobTag} Job failed`, { title: rawJob.title, error: err.message });
-            broadcastStatus(`❌ ${jobTag} Failed: "${rawJob.title}" — ${err.message}`, 'error');
+            if (err.message.startsWith('SKIPPED:')) {
+                const reason = err.message.replace('SKIPPED:', '').trim();
+                log('INFO', `${jobTag} Job skipped`, { title: rawJob.title, reason });
+                broadcastStatus(`⚠️ ${jobTag} Skipped: "${rawJob.title}" — ${reason}`, 'warn');
+                // We still count it as processed in terms of the loop finishing, 
+                // but we don't increment success/fail stats if we want to be precise,
+                // however here we increment processedCount to move forward.
+                processedCount++;
+            } else {
+                failedCount++;
+                await updateStats('failed');
+                log('ERROR', `${jobTag} Job failed`, { title: rawJob.title, error: err.message });
+                broadcastStatus(`❌ ${jobTag} Failed: "${rawJob.title}" — ${err.message}`, 'error');
+            }
         }
 
         // Wait for DOM to update and provide spacing between runs
         broadcastStatus(`⏱ Waiting 3s for UI stability…`, 'info');
-        await sleep(3000); 
+        await sleep(3000);
     }
 
     // --- Phase 2: Resume Builder ---
@@ -538,7 +567,7 @@ async function processJobFlow(rawJob, jobId, rowIndex, jobNum) {
 
     const viewUrl = popupData.viewFullPostUrl;
     if (!viewUrl) {
-        throw new Error('No "View Full Post" URL found in popup');
+        throw new Error('SKIPPED: No "View Full Post" URL found in popup');
     }
 
     // Step 2: Open external tab (hidden)
@@ -755,7 +784,7 @@ async function runInterviewPrepHubQueue() {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         jobs = await response.json();
         log('INFO', `Fetched ${jobs.length} total jobs from API`);
-        
+
         // Debug: Log each job's status
         jobs.forEach((job, idx) => {
             log('INFO', `Job ${idx + 1}: "${job.title}" - jdResumeBuilt: ${job.jdResumeBuilt}, interview_preparation_hub: ${job.interview_preparation_hub}`);
@@ -768,7 +797,7 @@ async function runInterviewPrepHubQueue() {
 
     const pendingJobs = jobs.filter(job => job.jdResumeBuilt === true && job.interview_preparation_hub !== true);
     log('INFO', `Filtered to ${pendingJobs.length} pending jobs for interview prep`);
-    
+
     if (pendingJobs.length === 0) {
         broadcastStatus('✅ No pending jobs for Interview Prep Hub. Phase 3 skipped.', 'success');
         return;
@@ -806,7 +835,7 @@ async function runInterviewPrepHubQueue() {
                 // Send scraped data to API (delegated from content script)
                 if (result.scrapedData) {
                     log('INFO', `${jobNum} Scraped ${result.questionsCount} questions. Sending to Vector DB...`);
-                    
+
                     const payload = {
                         jobId: job.jobId,
                         position: job.title,
@@ -814,7 +843,7 @@ async function runInterviewPrepHubQueue() {
                         scrapedData: result.scrapedData,
                         scrapedAt: new Date().toISOString()
                     };
-                    
+
                     try {
                         const apiResult = await sendInterviewPrepToAPI(payload);
                         if (apiResult.success) {
@@ -826,7 +855,7 @@ async function runInterviewPrepHubQueue() {
                         log('ERROR', `${jobNum} ❌ Error sending interview prep: ${err.message}`);
                     }
                 }
-                
+
                 // Update job status in API
                 job.interview_preparation_hub = true;
                 job.interviewPrepHubFilledAt = new Date().toISOString();
@@ -841,7 +870,7 @@ async function runInterviewPrepHubQueue() {
         if (i < pendingJobs.length - 1) {
             broadcastStatus(`⏱ Waiting 3s before next interview prep form…`, 'info');
             await sleep(3000);
-            
+
             // Navigate back to base URL to avoid being stuck on unique result URL
             log('INFO', 'Navigating back to base interview-preparation-hub URL...');
             await chrome.tabs.update(dashboardTabId, { url: 'https://landbetterjobs.com/interview-preparation-hub' });
@@ -854,7 +883,7 @@ async function runInterviewPrepHubQueue() {
     // Wait a bit to ensure all scraping is complete before navigating away
     log('INFO', 'Waiting 5s to ensure all scraping operations are complete...');
     await sleep(5000);
-    
+
     broadcastStatus('🏁 Phase 3 (Interview Preparation Hub) complete.', 'complete');
 }
 
