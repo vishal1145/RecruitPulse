@@ -87,6 +87,85 @@ function simulateRealClick(element) {
     });
 }
 
+// ─── Upgrade / Paywall popup workaround ──────────────────────────────────────
+// BUG (landbetterjobs.com): clicking "Create New" on the JD Resume Builder briefly
+// shows a Pro/Upgrade paywall popup even for paid accounts. It auto-dismisses in
+// ~2-3s, but it swallows the click so the resume form never opens. We detect it,
+// wait it out (or close it), then re-click "Create New".
+
+// Returns the visible upgrade/paywall popup element, or null if not present.
+function getUpgradePopup() {
+    const candidates = Array.from(
+        document.querySelectorAll('[role="dialog"], [class*="modal"], [class*="popup"], [class*="dialog"]')
+    );
+    return candidates.find(el => {
+        const visible = el.offsetWidth > 0 && el.offsetHeight > 0;
+        if (!visible) return false;
+        const text = el.innerText || '';
+        return /upgrade now/i.test(text)
+            || /unlock your next/i.test(text)
+            || /all plans include full pro features/i.test(text)
+            || /\bpro (monthly|weekly|quarterly)\b/i.test(text);
+    }) || null;
+}
+
+// Tries to close the popup via its X/close button. Never clicks any "Upgrade"/buy
+// button. Returns true if a close action was dispatched.
+function tryCloseUpgradePopup(popup) {
+    if (!popup) return false;
+    const closeBtn = Array.from(popup.querySelectorAll('button, [role="button"], svg, [class*="close"]'))
+        .find(el => {
+            const txt = (el.innerText || el.getAttribute('aria-label') || '').trim();
+            if (/upgrade|unlock|buy|plan/i.test(txt)) return false; // never the purchase CTA
+            return el.getAttribute('aria-label') === 'Close'
+                || /^(×|✕|✖|x|close)$/i.test(txt)
+                || /close/i.test(el.className || '');
+        });
+    if (closeBtn) {
+        simulateRealClick(closeBtn);
+        return true;
+    }
+    // Fallback: ESC key.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+    return true;
+}
+
+// If the upgrade popup is showing, wait it out (it auto-dismisses for paid users)
+// and re-click "Create New", since the popup swallowed the first click. Resolves
+// once the resume form (combobox) is present or retries are exhausted.
+async function dismissUpgradePopupAndRetry(findCreateBtn, maxRetries = 3) {
+    for (let i = 0; i < maxRetries; i++) {
+        // If the form already opened, nothing to do.
+        if (document.querySelector(RESUME_BUILDER_SELECTORS.RESUME_COMBOBOX)) return;
+
+        // Give the popup a moment to appear after the click.
+        if (!getUpgradePopup()) {
+            await sleep(400);
+            if (!getUpgradePopup()) return; // No popup -> normal flow, let caller continue.
+        }
+
+        log('WARN', `Upgrade popup detected. Waiting for it to dismiss (attempt ${i + 1}/${maxRetries})...`);
+
+        // Nudge it closed, then wait for it to actually disappear (~2-3s for paid users).
+        tryCloseUpgradePopup(getUpgradePopup());
+        const dismissDeadline = Date.now() + 8000;
+        while (getUpgradePopup() && Date.now() < dismissDeadline) {
+            await sleep(300);
+        }
+        await sleep(500); // let the DOM settle
+
+        // Re-click "Create New" because the popup ate the first click.
+        if (!document.querySelector(RESUME_BUILDER_SELECTORS.RESUME_COMBOBOX)) {
+            const retryBtn = findCreateBtn();
+            if (retryBtn) {
+                log('INFO', 'Re-clicking "Create New" after popup dismissed...');
+                simulateRealClick(retryBtn);
+                await sleep(800);
+            }
+        }
+    }
+}
+
 // ─── Main Logic ─────────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -137,6 +216,14 @@ async function handleBuildResume(job) {
             log('INFO', 'Clicking "Create New"...');
             simulateRealClick(createNewBtn);
             await sleep(500); // Give it a moment to transition
+
+            // Handle the Pro/Upgrade paywall popup that landbetterjobs.com briefly
+            // flashes here even for paid accounts. It auto-dismisses in ~2-3s but
+            // swallows the click, so wait it out and re-click "Create New".
+            await dismissUpgradePopupAndRetry(() =>
+                Array.from(document.querySelectorAll(RESUME_BUILDER_SELECTORS.CREATE_NEW_BTN))
+                    .find(btn => btn.innerText.includes("Create New"))
+            );
         }
 
         // 3. Wait for form/combobox
